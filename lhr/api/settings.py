@@ -8,7 +8,14 @@ from lhr.settings import load_settings, patch_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-ALLOWED = {"last_document", "window", "roots", "sidebar_width"}
+ALLOWED = {
+    "last_document",
+    "window",
+    "roots",
+    "sidebar_width",
+    "search_history",
+    "page_search_history",
+}
 
 
 @router.get("")

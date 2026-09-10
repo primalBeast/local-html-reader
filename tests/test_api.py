@@ -66,6 +66,16 @@ def test_settings_round_trip(client: TestClient):
     assert client.get("/api/settings").json()["sidebar_width"] == 420
     clamped = client.patch("/api/settings", json={"sidebar_width": 12})
     assert clamped.json()["sidebar_width"] == 160
+    hist = client.patch(
+        "/api/settings",
+        json={"search_history": ["noURLResponse", "  noURLResponse  ", "", "Cache"]},
+    )
+    assert hist.json()["search_history"] == ["noURLResponse", "Cache"]
+    page_hist = client.patch(
+        "/api/settings",
+        json={"page_search_history": ["task", "task", ""]},
+    )
+    assert page_hist.json()["page_search_history"] == ["task"]
 
 
 def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: Path):

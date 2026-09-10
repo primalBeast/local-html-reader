@@ -11,14 +11,38 @@ from lhr.paths import data_root, settings_path
 SIDEBAR_WIDTH_DEFAULT = 320
 SIDEBAR_WIDTH_MIN = 160
 SIDEBAR_WIDTH_MAX = 1600
+SEARCH_HISTORY_MAX = 25
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "schema_version": 1,
     "roots": [],
     "last_document": None,
     "sidebar_width": SIDEBAR_WIDTH_DEFAULT,
+    "search_history": [],
+    "page_search_history": [],
     "window": {"last_host": "127.0.0.1", "last_port": 8766},
 }
+
+
+def normalize_search_history(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= SEARCH_HISTORY_MAX:
+            break
+    return out
 
 
 def clamp_sidebar_width(value: Any) -> int:
@@ -48,6 +72,8 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(out.get("roots"), list):
         out["roots"] = []
     out["sidebar_width"] = clamp_sidebar_width(out.get("sidebar_width"))
+    out["search_history"] = normalize_search_history(out.get("search_history"))
+    out["page_search_history"] = normalize_search_history(out.get("page_search_history"))
     return out
 
 
@@ -67,6 +93,10 @@ def patch_settings(updates: dict[str, Any]) -> dict[str, Any]:
             data["last_document"] = v
         elif k == "sidebar_width":
             data["sidebar_width"] = clamp_sidebar_width(v)
+        elif k == "search_history":
+            data["search_history"] = normalize_search_history(v)
+        elif k == "page_search_history":
+            data["page_search_history"] = normalize_search_history(v)
         elif k in DEFAULT_SETTINGS:
             data[k] = v
     return save_settings(data)

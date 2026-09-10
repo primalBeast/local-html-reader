@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Tree from './lib/Tree.svelte';
+  import SearchField from './lib/SearchField.svelte';
   import { api, viewUrl, type DocumentHit, type Root, type TreeNode } from './lib/api';
   import { applyFinds, reveal } from './lib/pageFind';
 
@@ -9,6 +10,9 @@
   let fileCount = $state(0);
   let truncated = $state(false);
   let query = $state('');
+  let searching = $state(false);
+  let searchHistory = $state<string[]>([]);
+  let pageHistory = $state<string[]>([]);
   let selected = $state<DocumentHit | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -23,7 +27,7 @@
   let listQuery = $state('');
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
-  let listFindInput = $state<HTMLInputElement | null>(null);
+
   let pageQuery = $state('');
   let pageMarks = $state<HTMLElement[]>([]);
   let pageIndex = $state(0);
@@ -33,6 +37,9 @@
   const SIDEBAR_MIN = 180;
   const SIDEBAR_RIGHT_MIN = 280;
   const SIDEBAR_STORAGE = 'lhr.sidebar_width';
+  const HISTORY_STORAGE = 'lhr.search_history';
+  const PAGE_HISTORY_STORAGE = 'lhr.page_search_history';
+  const HISTORY_MAX = 25;
 
   function readLocalWidth(): number {
     try {
@@ -57,11 +64,59 @@
     roots = data.roots;
   }
 
+  let searchGen = 0;
+
+  function persistHistoryList(items: string[], storageKey: string, settingsKey: 'search_history' | 'page_search_history') {
+    const next = items.slice(0, HISTORY_MAX);
+    if (settingsKey === 'search_history') searchHistory = next;
+    else pageHistory = next;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+    void api.patchSettings({ [settingsKey]: next }).catch(() => undefined);
+  }
+
+  function rememberSearch(term: string) {
+    const t = term.trim();
+    if (!t) return;
+    persistHistoryList(
+      [t, ...searchHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())],
+      HISTORY_STORAGE,
+      'search_history',
+    );
+  }
+
+  function rememberPageSearch(term: string) {
+    const t = term.trim();
+    if (!t) return;
+    persistHistoryList(
+      [t, ...pageHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())],
+      PAGE_HISTORY_STORAGE,
+      'page_search_history',
+    );
+  }
+
+  function historyFromUnknown(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
+  }
+
   async function refreshTree() {
-    const data = await api.tree(query.trim() || undefined);
-    tree = data.tree;
-    fileCount = data.file_count;
-    truncated = data.truncated;
+    const q = query.trim();
+    const gen = ++searchGen;
+    searching = Boolean(q);
+    try {
+      const data = await api.tree(q || undefined);
+      if (gen !== searchGen) return;
+      tree = data.tree;
+      fileCount = data.file_count;
+      truncated = data.truncated;
+      if (q) rememberSearch(q);
+    } finally {
+      if (gen === searchGen) searching = false;
+    }
   }
 
   async function boot() {
@@ -77,6 +132,24 @@
           localStorage.setItem(SIDEBAR_STORAGE, String(sidebarWidth));
         } catch {
           /* ignore */
+        }
+      }
+      if (Array.isArray(settings.search_history) && settings.search_history.length) {
+        searchHistory = historyFromUnknown(settings.search_history);
+      } else {
+        try {
+          searchHistory = historyFromUnknown(JSON.parse(localStorage.getItem(HISTORY_STORAGE) || '[]'));
+        } catch {
+          searchHistory = [];
+        }
+      }
+      if (Array.isArray(settings.page_search_history) && settings.page_search_history.length) {
+        pageHistory = historyFromUnknown(settings.page_search_history);
+      } else {
+        try {
+          pageHistory = historyFromUnknown(JSON.parse(localStorage.getItem(PAGE_HISTORY_STORAGE) || '[]'));
+        } catch {
+          pageHistory = [];
         }
       }
       await refreshRoots();
@@ -196,10 +269,50 @@
     query = value;
     listQuery = value;
     runAllFinds(true);
+    searching = Boolean(value.trim());
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       void refreshTree();
     }, 200);
+  }
+
+  function clearSearch() {
+    query = '';
+    listQuery = '';
+    searching = false;
+    searchGen += 1;
+    runAllFinds(true);
+    void refreshTree();
+  }
+
+  function pickHistory(term: string) {
+    query = term;
+    listQuery = term;
+    searching = true;
+    runAllFinds(true);
+    void refreshTree();
+  }
+
+  function clearListFind() {
+    listQuery = '';
+    runAllFinds(true);
+  }
+
+  function pickListHistory(term: string) {
+    listQuery = term;
+    rememberSearch(term);
+    runAllFinds(true);
+  }
+
+  function clearPageFind() {
+    pageQuery = '';
+    runAllFinds(false);
+  }
+
+  function pickPageHistory(term: string) {
+    pageQuery = term;
+    rememberPageSearch(term);
+    runAllFinds(false);
   }
 
   function iframeDoc(): Document | null {
@@ -236,14 +349,25 @@
     }
   }
 
+  let listHistTimer: ReturnType<typeof setTimeout> | undefined;
+  let pageHistTimer: ReturnType<typeof setTimeout> | undefined;
+
   function onListSearchInput(value: string) {
     listQuery = value;
     runAllFinds(true);
+    clearTimeout(listHistTimer);
+    if (value.trim()) {
+      listHistTimer = setTimeout(() => rememberSearch(value), 400);
+    }
   }
 
   function onPageSearchInput(value: string) {
     pageQuery = value;
     runAllFinds(false);
+    clearTimeout(pageHistTimer);
+    if (value.trim()) {
+      pageHistTimer = setTimeout(() => rememberPageSearch(value), 400);
+    }
   }
 
   function listFindNext() {
@@ -309,7 +433,7 @@
         pageQuery = '';
         runAllFinds(false);
       }
-      if (inField && target === listFindInput) {
+      if (inField && target?.closest('.list-find-field')) {
         listQuery = '';
         runAllFinds(true);
       }
@@ -374,18 +498,24 @@
     <section class="pane sidebar">
       <div class="pane-head">
         <h2>Documents</h2>
-        <input
-          type="text"
+        <SearchField
           value={query}
-          oninput={(e) => onTreeSearch(e.currentTarget.value)}
           placeholder="Search in HTML files"
-          aria-label="Search documents by text"
-          spellcheck="false"
+          ariaLabel="Search documents by text"
+          history={searchHistory}
+          searching={searching}
+          onInput={onTreeSearch}
+          onClear={clearSearch}
+          onPick={pickHistory}
         />
         {#if query.trim()}
           <div class="muted">
-            {fileCount} matching file{fileCount === 1 ? '' : 's'}
-            {#if truncated} (truncated){/if}
+            {#if searching}
+              Searching files…
+            {:else}
+              {fileCount} matching file{fileCount === 1 ? '' : 's'}
+              {#if truncated} (truncated){/if}
+            {/if}
           </div>
         {/if}
       </div>
@@ -439,14 +569,15 @@
                 listFindNext();
               }}
             >
-              <input
-                bind:this={listFindInput}
-                type="text"
+              <SearchField
                 value={listQuery}
-                oninput={(e) => onListSearchInput(e.currentTarget.value)}
                 placeholder="From list search"
-                aria-label="Search this page for the document-list search term"
-                spellcheck="false"
+                ariaLabel="Search this page for the document-list search term"
+                history={searchHistory}
+                extraClass="list-find-field"
+                onInput={onListSearchInput}
+                onClear={clearListFind}
+                onPick={pickListHistory}
               />
               <span class="find-count">
                 {#if listQuery.trim()}
@@ -463,14 +594,18 @@
                 pageFindNext();
               }}
             >
-              <input
-                bind:this={pageFindInput}
-                type="text"
+              <SearchField
                 value={pageQuery}
-                oninput={(e) => onPageSearchInput(e.currentTarget.value)}
                 placeholder="Find in page"
-                aria-label="Find in the open document"
-                spellcheck="false"
+                ariaLabel="Find in the open document"
+                history={pageHistory}
+                extraClass="page-find-field"
+                onInput={onPageSearchInput}
+                onClear={clearPageFind}
+                onPick={pickPageHistory}
+                bindInput={(el) => {
+                  pageFindInput = el;
+                }}
               />
               <span class="find-count">
                 {#if pageQuery.trim()}

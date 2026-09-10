@@ -29,6 +29,8 @@ export type Settings = {
   roots: Array<{ id: string; path: string }>;
   last_document: { root_id: string; rel: string } | null;
   sidebar_width: number;
+  search_history: string[];
+  page_search_history: string[];
   window: { last_host: string; last_port: number };
 };
 
