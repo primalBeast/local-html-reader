@@ -9,7 +9,7 @@ from typing import Any
 
 from lhr.html_text import html_visible_text
 from lhr.paths import PathEscapeError, is_within, normalize_rel, resolve_under_root
-from lhr.settings import load_settings, save_settings
+from lhr.settings import load_settings, save_settings, settings_write_lock
 
 HTML_SUFFIXES = {".html", ".htm"}
 MAX_LIST = 5000
@@ -64,23 +64,24 @@ def add_root(raw_path: str) -> dict[str, Any]:
     if not resolved.is_dir():
         raise ValueError("path is not an existing directory")
 
-    settings = load_settings()
-    roots = [r for r in (settings.get("roots") or []) if isinstance(r, dict)]
-    for rec in roots:
-        existing = str(rec.get("path") or "")
-        if not existing:
-            continue
-        try:
-            if Path(existing).expanduser().resolve() == resolved:
-                return {"id": str(rec.get("id")), "path": str(resolved), "exists": True}
-        except OSError:
-            continue
+    with settings_write_lock():
+        settings = load_settings()
+        roots = [r for r in (settings.get("roots") or []) if isinstance(r, dict)]
+        for rec in roots:
+            existing = str(rec.get("path") or "")
+            if not existing:
+                continue
+            try:
+                if Path(existing).expanduser().resolve() == resolved:
+                    return {"id": str(rec.get("id")), "path": str(resolved), "exists": True}
+            except OSError:
+                continue
 
-    rec = {"id": secrets.token_hex(6), "path": str(resolved)}
-    roots.append(rec)
-    settings["roots"] = roots
-    save_settings(settings)
-    return {**rec, "exists": True}
+        rec = {"id": secrets.token_hex(6), "path": str(resolved)}
+        roots.append(rec)
+        settings["roots"] = roots
+        save_settings(settings)
+        return {**rec, "exists": True}
 
 
 def set_root(raw_path: str) -> dict[str, Any]:
@@ -98,43 +99,45 @@ def set_root(raw_path: str) -> dict[str, Any]:
     if not resolved.is_dir():
         raise ValueError("path is not an existing directory")
 
-    settings = load_settings()
-    keep_id: str | None = None
-    for rec in settings.get("roots") or []:
-        if not isinstance(rec, dict):
-            continue
-        existing = str(rec.get("path") or "")
-        if not existing:
-            continue
-        try:
-            if Path(existing).expanduser().resolve() == resolved:
-                keep_id = str(rec.get("id") or "") or None
-                break
-        except OSError:
-            continue
+    with settings_write_lock():
+        settings = load_settings()
+        keep_id: str | None = None
+        for rec in settings.get("roots") or []:
+            if not isinstance(rec, dict):
+                continue
+            existing = str(rec.get("path") or "")
+            if not existing:
+                continue
+            try:
+                if Path(existing).expanduser().resolve() == resolved:
+                    keep_id = str(rec.get("id") or "") or None
+                    break
+            except OSError:
+                continue
 
-    rec = {"id": keep_id or secrets.token_hex(6), "path": str(resolved)}
-    last = settings.get("last_document")
-    if not (isinstance(last, dict) and str(last.get("root_id")) == rec["id"]):
-        settings["last_document"] = None
-    settings["roots"] = [rec]
-    save_settings(settings)
-    return {**rec, "exists": True}
+        rec = {"id": keep_id or secrets.token_hex(6), "path": str(resolved)}
+        last = settings.get("last_document")
+        if not (isinstance(last, dict) and str(last.get("root_id")) == rec["id"]):
+            settings["last_document"] = None
+        settings["roots"] = [rec]
+        save_settings(settings)
+        return {**rec, "exists": True}
 
 
 def remove_root(root_id: str) -> bool:
     rid = (root_id or "").strip()
-    settings = load_settings()
-    roots = [r for r in (settings.get("roots") or []) if isinstance(r, dict)]
-    kept = [r for r in roots if str(r.get("id")) != rid]
-    if len(kept) == len(roots):
-        return False
-    settings["roots"] = kept
-    last = settings.get("last_document")
-    if isinstance(last, dict) and str(last.get("root_id")) == rid:
-        settings["last_document"] = None
-    save_settings(settings)
-    return True
+    with settings_write_lock():
+        settings = load_settings()
+        roots = [r for r in (settings.get("roots") or []) if isinstance(r, dict)]
+        kept = [r for r in roots if str(r.get("id")) != rid]
+        if len(kept) == len(roots):
+            return False
+        settings["roots"] = kept
+        last = settings.get("last_document")
+        if isinstance(last, dict) and str(last.get("root_id")) == rid:
+            settings["last_document"] = None
+        save_settings(settings)
+        return True
 
 
 def root_dir(root_id: str) -> Path:

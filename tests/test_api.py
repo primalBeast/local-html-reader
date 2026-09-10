@@ -78,6 +78,35 @@ def test_settings_round_trip(client: TestClient):
     assert page_hist.json()["page_search_history"] == ["task"]
 
 
+def test_history_add_merges_and_delete_syncs(client: TestClient):
+    first = client.post(
+        "/api/settings/history",
+        json={"bucket": "search_history", "term": "alpha"},
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        "/api/settings/history",
+        json={"bucket": "search_history", "term": "beta"},
+    )
+    assert second.json()["history"][:2] == ["beta", "alpha"]
+    gone = client.delete(
+        "/api/settings/history",
+        params={"bucket": "search_history", "term": "alpha"},
+    )
+    assert gone.status_code == 200
+    assert gone.json()["history"] == ["beta"]
+    assert client.get("/api/settings").json()["search_history"] == ["beta"]
+
+
+def test_history_delete_is_case_insensitive(client: TestClient):
+    client.post("/api/settings/history", json={"bucket": "page_search_history", "term": "Task"})
+    gone = client.delete(
+        "/api/settings/history",
+        params={"bucket": "page_search_history", "term": "task"},
+    )
+    assert gone.json()["history"] == []
+
+
 def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: Path):
     missing = client.post("/api/roots", json={"path": str(tmp_path / "no-such-dir")})
     assert missing.status_code == 400

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any
 
+from lhr.filelock import exclusive_file_lock
 from lhr.json_io import read_json, write_json
 from lhr.paths import data_root, settings_path
+
+_thread_lock = threading.RLock()
 
 SIDEBAR_WIDTH_DEFAULT = 320
 SIDEBAR_WIDTH_MIN = 160
@@ -53,6 +59,18 @@ def clamp_sidebar_width(value: Any) -> int:
     return max(SIDEBAR_WIDTH_MIN, min(SIDEBAR_WIDTH_MAX, n))
 
 
+def _lock():
+    data_root().mkdir(parents=True, exist_ok=True)
+    return exclusive_file_lock(data_root() / ".settings.lock")
+
+
+@contextmanager
+def settings_write_lock() -> Iterator[None]:
+    with _thread_lock:
+        with _lock():
+            yield
+
+
 def ensure_data_layout() -> None:
     data_root().mkdir(parents=True, exist_ok=True)
     if not settings_path().exists():
@@ -79,24 +97,57 @@ def load_settings() -> dict[str, Any]:
 
 def save_settings(data: dict[str, Any]) -> dict[str, Any]:
     write_json(settings_path(), data)
+    try:
+        from lhr.sync import broadcast
+
+        broadcast(deepcopy(data))
+    except Exception:
+        pass
     return data
 
 
 def patch_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    data = load_settings()
-    for k, v in updates.items():
-        if k == "window" and isinstance(v, dict) and isinstance(data.get("window"), dict):
-            data["window"] = {**data["window"], **v}
-        elif k == "roots" and isinstance(v, list):
-            data["roots"] = v
-        elif k == "last_document":
-            data["last_document"] = v
-        elif k == "sidebar_width":
-            data["sidebar_width"] = clamp_sidebar_width(v)
-        elif k == "search_history":
-            data["search_history"] = normalize_search_history(v)
-        elif k == "page_search_history":
-            data["page_search_history"] = normalize_search_history(v)
-        elif k in DEFAULT_SETTINGS:
-            data[k] = v
-    return save_settings(data)
+    with settings_write_lock():
+        data = load_settings()
+        for k, v in updates.items():
+            if k == "window" and isinstance(v, dict) and isinstance(data.get("window"), dict):
+                data["window"] = {**data["window"], **v}
+            elif k == "roots" and isinstance(v, list):
+                data["roots"] = v
+            elif k == "last_document":
+                data["last_document"] = v
+            elif k == "sidebar_width":
+                data["sidebar_width"] = clamp_sidebar_width(v)
+            elif k == "search_history":
+                data["search_history"] = normalize_search_history(v)
+            elif k == "page_search_history":
+                data["page_search_history"] = normalize_search_history(v)
+            elif k in DEFAULT_SETTINGS:
+                data[k] = v
+        return save_settings(data)
+
+
+def add_search_term(bucket: str, term: str) -> list[str]:
+    if bucket not in ("search_history", "page_search_history"):
+        raise ValueError("unknown history list")
+    with settings_write_lock():
+        data = load_settings()
+        data[bucket] = normalize_search_history([term, *(data.get(bucket) or [])])
+        save_settings(data)
+        return list(data[bucket])
+
+
+def remove_search_term(bucket: str, term: str) -> list[str]:
+    if bucket not in ("search_history", "page_search_history"):
+        raise ValueError("unknown history list")
+    needle = (term or "").strip().lower()
+    with settings_write_lock():
+        data = load_settings()
+        current = data.get(bucket) or []
+        data[bucket] = [
+            item
+            for item in current
+            if not (isinstance(item, str) and item.strip().lower() == needle)
+        ]
+        save_settings(data)
+        return list(data[bucket])

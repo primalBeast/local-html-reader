@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -13,6 +15,7 @@ from lhr import __version__
 from lhr.api import documents, roots, settings
 from lhr.config import get_config
 from lhr.middleware import SecurityHeadersMiddleware, install_cors
+from lhr.sync import clear_subscribers, run_poller, set_loop
 
 logger = logging.getLogger("lhr.app")
 
@@ -29,6 +32,20 @@ def frontend_dist() -> Path:
     return candidates[0]
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    set_loop(asyncio.get_running_loop())
+    task = asyncio.create_task(run_poller())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        clear_subscribers()
+        set_loop(None)
+
+
 def create_app() -> FastAPI:
     cfg = get_config()
     app = FastAPI(
@@ -36,6 +53,7 @@ def create_app() -> FastAPI:
         version=__version__,
         docs_url="/api/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     install_cors(app, enabled=cfg.dev_cors)

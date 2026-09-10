@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import Tree from './lib/Tree.svelte';
   import SearchField from './lib/SearchField.svelte';
-  import { api, viewUrl, type DocumentHit, type Root, type TreeNode } from './lib/api';
+  import { api, viewUrl, type DocumentHit, type Root, type Settings, type TreeNode } from './lib/api';
   import { applyFinds, reveal } from './lib/pageFind';
 
   let roots = $state<Root[]>([]);
@@ -67,52 +67,88 @@
 
   let searchGen = 0;
 
-  function persistHistoryList(items: string[], storageKey: string, settingsKey: 'search_history' | 'page_search_history') {
-    const next = items.slice(0, HISTORY_MAX);
-    if (settingsKey === 'search_history') searchHistory = next;
-    else pageHistory = next;
+  function cacheHistory(storageKey: string, items: string[]) {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
+      localStorage.setItem(storageKey, JSON.stringify(items));
     } catch {
       /* ignore */
     }
-    void api.patchSettings({ [settingsKey]: next }).catch(() => undefined);
   }
 
   function rememberSearch(term: string) {
     const t = term.trim();
     if (!t) return;
-    persistHistoryList(
-      [t, ...searchHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())],
-      HISTORY_STORAGE,
-      'search_history',
+    searchHistory = [t, ...searchHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())].slice(
+      0,
+      HISTORY_MAX,
     );
+    cacheHistory(HISTORY_STORAGE, searchHistory);
+    void api
+      .addHistory('search_history', t)
+      .then((res) => {
+        searchHistory = res.history;
+        cacheHistory(HISTORY_STORAGE, res.history);
+      })
+      .catch(() => undefined);
   }
 
   function rememberPageSearch(term: string) {
     const t = term.trim();
     if (!t) return;
-    persistHistoryList(
-      [t, ...pageHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())],
-      PAGE_HISTORY_STORAGE,
-      'page_search_history',
+    pageHistory = [t, ...pageHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())].slice(
+      0,
+      HISTORY_MAX,
     );
+    cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
+    void api
+      .addHistory('page_search_history', t)
+      .then((res) => {
+        pageHistory = res.history;
+        cacheHistory(PAGE_HISTORY_STORAGE, res.history);
+      })
+      .catch(() => undefined);
   }
 
   function removeSearchHistory(term: string) {
-    persistHistoryList(
-      searchHistory.filter((item) => item.toLowerCase() !== term.toLowerCase()),
-      HISTORY_STORAGE,
-      'search_history',
-    );
+    searchHistory = searchHistory.filter((item) => item.toLowerCase() !== term.toLowerCase());
+    cacheHistory(HISTORY_STORAGE, searchHistory);
+    void api
+      .removeHistory('search_history', term)
+      .then((res) => {
+        searchHistory = res.history;
+        cacheHistory(HISTORY_STORAGE, res.history);
+      })
+      .catch(() => undefined);
   }
 
   function removePageHistory(term: string) {
-    persistHistoryList(
-      pageHistory.filter((item) => item.toLowerCase() !== term.toLowerCase()),
-      PAGE_HISTORY_STORAGE,
-      'page_search_history',
-    );
+    pageHistory = pageHistory.filter((item) => item.toLowerCase() !== term.toLowerCase());
+    cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
+    void api
+      .removeHistory('page_search_history', term)
+      .then((res) => {
+        pageHistory = res.history;
+        cacheHistory(PAGE_HISTORY_STORAGE, res.history);
+      })
+      .catch(() => undefined);
+  }
+
+  function applySharedSettings(s: Settings) {
+    const nextSearch = historyFromUnknown(s.search_history);
+    const nextPage = historyFromUnknown(s.page_search_history);
+    if (JSON.stringify(nextSearch) !== JSON.stringify(searchHistory)) {
+      searchHistory = nextSearch;
+      cacheHistory(HISTORY_STORAGE, nextSearch);
+    }
+    if (JSON.stringify(nextPage) !== JSON.stringify(pageHistory)) {
+      pageHistory = nextPage;
+      cacheHistory(PAGE_HISTORY_STORAGE, nextPage);
+    }
+    const incoming = (s.roots || []).map((r) => `${r.id}\t${r.path}`).join('\n');
+    const current = roots.map((r) => `${r.id}\t${r.path}`).join('\n');
+    if (incoming !== current) {
+      void refreshRoots().then(() => refreshTree());
+    }
   }
 
   function historyFromUnknown(raw: unknown): string[] {
@@ -486,6 +522,7 @@
 
   onMount(() => {
     void boot();
+    const stopWatch = api.watchSettings(applySharedSettings);
     const onResize = () => {
       sidebarWidth = clampSidebar(sidebarWidth);
     };
@@ -493,6 +530,7 @@
     window.addEventListener('click', onWindowClick);
     window.addEventListener('resize', onResize);
     return () => {
+      stopWatch();
       window.removeEventListener('keydown', onKeydown);
       window.removeEventListener('click', onWindowClick);
       window.removeEventListener('resize', onResize);

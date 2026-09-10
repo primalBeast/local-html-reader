@@ -62,6 +62,29 @@ export const api = {
   settings: () => request<Settings>('/api/settings'),
   patchSettings: (body: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(body) }),
+  addHistory: (bucket: 'search_history' | 'page_search_history', term: string) =>
+    request<{ bucket: string; history: string[] }>('/api/settings/history', {
+      method: 'POST',
+      body: JSON.stringify({ bucket, term }),
+    }),
+  removeHistory: (bucket: 'search_history' | 'page_search_history', term: string) => {
+    const params = new URLSearchParams({ bucket, term });
+    return request<{ bucket: string; history: string[] }>(
+      `/api/settings/history?${params.toString()}`,
+      { method: 'DELETE' },
+    );
+  },
+  watchSettings(onUpdate: (settings: Settings) => void): () => void {
+    const source = new EventSource('/api/settings/events');
+    source.onmessage = (event) => {
+      try {
+        onUpdate(JSON.parse(event.data) as Settings);
+      } catch {
+        /* ignore */
+      }
+    };
+    return () => source.close();
+  },
   roots: () => request<{ roots: Root[] }>('/api/roots'),
   addRoot: (path: string) =>
     request<Root>('/api/roots', { method: 'POST', body: JSON.stringify({ path }) }),
