@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+!frontend/dist/
+!frontend/dist/**
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+node_modules/
+frontend/node_modules/
+*.log
+.coverage
+htmlcov/
+.idea/
+.vscode/
+*.swp
+.lhr-data/
+# Do not ignore frontend/dist — required for clone-and-run
+.pytest_cache/

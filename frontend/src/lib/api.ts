@@ -1,0 +1,77 @@
+export type Root = {
+  id: string;
+  path: string;
+  exists: boolean;
+};
+
+export type DocumentHit = {
+  root_id: string;
+  root_path: string;
+  rel: string;
+  name: string;
+  size: number;
+  mtime: number;
+};
+
+export type Settings = {
+  schema_version: number;
+  roots: Array<{ id: string; path: string }>;
+  last_document: { root_id: string; rel: string } | null;
+  window: { last_host: string; last_port: number };
+};
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === 'string') detail = body.detail;
+      else if (body && Array.isArray(body.detail)) detail = JSON.stringify(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+export const api = {
+  health: () => request<{ status: string; version: string }>('/health'),
+  settings: () => request<Settings>('/api/settings'),
+  patchSettings: (body: Partial<Settings>) =>
+    request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(body) }),
+  roots: () => request<{ roots: Root[] }>('/api/roots'),
+  addRoot: (path: string) =>
+    request<Root>('/api/roots', { method: 'POST', body: JSON.stringify({ path }) }),
+  removeRoot: (id: string) =>
+    request<{ ok: boolean; id: string }>(`/api/roots/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  documents: (q?: string, rootId?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (rootId) params.set('root_id', rootId);
+    const qs = params.toString();
+    return request<{ documents: DocumentHit[]; truncated: boolean }>(
+      `/api/documents${qs ? `?${qs}` : ''}`,
+    );
+  },
+};
+
+export function viewUrl(rootId: string, rel: string): string {
+  const parts = rel
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  return `/view/${encodeURIComponent(rootId)}/${parts}`;
+}
