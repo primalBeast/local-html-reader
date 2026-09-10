@@ -295,15 +295,28 @@ input[type="text"]:focus {
   overflow: auto;
 }
 
-.search-history button {
+.search-history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0 0.12rem;
+  border-radius: 6px;
+}
+
+.search-history-row:hover {
+  background: var(--bg-hover);
+}
+
+.search-history-term {
+  flex: 1;
+  min-width: 0;
   display: block;
-  width: 100%;
   text-align: left;
   background: transparent;
   color: var(--text);
   border: none;
   border-radius: 6px;
-  padding: 0.4rem 0.55rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.45rem;
   font-size: 0.8rem;
   cursor: pointer;
   white-space: nowrap;
@@ -311,8 +324,27 @@ input[type="text"]:focus {
   text-overflow: ellipsis;
 }
 
-.search-history button:hover {
-  background: var(--bg-hover);
+.search-history-forget {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-right: 0.15rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #7a1515;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-history-forget:hover {
+  background: #a31c1c;
 }
 
 @keyframes lhr-spin {

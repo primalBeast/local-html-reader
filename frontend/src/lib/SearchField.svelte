@@ -11,6 +11,7 @@
     onInput,
     onClear,
     onPick,
+    onRemove,
     bindInput,
   }: {
     value: string;
@@ -22,6 +23,7 @@
     onInput: (value: string) => void;
     onClear: () => void;
     onPick: (term: string) => void;
+    onRemove?: (term: string) => void;
     bindInput?: (el: HTMLInputElement | null) => void;
   } = $props();
 
@@ -81,8 +83,9 @@
   {#if open && filtered().length}
     <ul class="search-history" aria-label="Recent searches">
       {#each filtered() as term (term)}
-        <li>
+        <li class="search-history-row">
           <button
+            class="search-history-term"
             type="button"
             onmousedown={(e) => {
               e.preventDefault();
@@ -95,6 +98,23 @@
           >
             {term}
           </button>
+          {#if onRemove}
+            <button
+              class="search-history-forget"
+              type="button"
+              aria-label="Remove {term} from history"
+              onmousedown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onclick={(e) => {
+                e.stopPropagation();
+                onRemove(term);
+              }}
+            >
+              ×
+            </button>
+          {/if}
         </li>
       {/each}
     </ul>

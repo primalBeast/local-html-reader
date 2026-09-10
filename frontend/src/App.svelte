@@ -27,10 +27,11 @@
   let listQuery = $state('');
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
-
+  let listFinding = $state(false);
   let pageQuery = $state('');
   let pageMarks = $state<HTMLElement[]>([]);
   let pageIndex = $state(0);
+  let pageFinding = $state(false);
   let pageFindInput = $state<HTMLInputElement | null>(null);
 
   const SIDEBAR_DEFAULT = 320;
@@ -93,6 +94,22 @@
     if (!t) return;
     persistHistoryList(
       [t, ...pageHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())],
+      PAGE_HISTORY_STORAGE,
+      'page_search_history',
+    );
+  }
+
+  function removeSearchHistory(term: string) {
+    persistHistoryList(
+      searchHistory.filter((item) => item.toLowerCase() !== term.toLowerCase()),
+      HISTORY_STORAGE,
+      'search_history',
+    );
+  }
+
+  function removePageHistory(term: string) {
+    persistHistoryList(
+      pageHistory.filter((item) => item.toLowerCase() !== term.toLowerCase()),
       PAGE_HISTORY_STORAGE,
       'page_search_history',
     );
@@ -268,7 +285,7 @@
   function onTreeSearch(value: string) {
     query = value;
     listQuery = value;
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
     searching = Boolean(value.trim());
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
@@ -281,7 +298,7 @@
     listQuery = '';
     searching = false;
     searchGen += 1;
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
     void refreshTree();
   }
 
@@ -289,30 +306,30 @@
     query = term;
     listQuery = term;
     searching = true;
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
     void refreshTree();
   }
 
   function clearListFind() {
     listQuery = '';
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
   }
 
   function pickListHistory(term: string) {
     listQuery = term;
     rememberSearch(term);
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
   }
 
   function clearPageFind() {
     pageQuery = '';
-    runAllFinds(false);
+    scheduleDocFind(false, 'page');
   }
 
   function pickPageHistory(term: string) {
     pageQuery = term;
     rememberPageSearch(term);
-    runAllFinds(false);
+    scheduleDocFind(false, 'page');
   }
 
   function iframeDoc(): Document | null {
@@ -349,12 +366,40 @@
     }
   }
 
+  let docFindTimer: ReturnType<typeof setTimeout> | undefined;
+  let docFindGen = 0;
+
+  function scheduleDocFind(focusList: boolean, which: 'list' | 'page' | 'both') {
+    const gen = ++docFindGen;
+    if (which === 'list' || which === 'both') listFinding = Boolean(listQuery.trim());
+    if (which === 'page' || which === 'both') pageFinding = Boolean(pageQuery.trim());
+    clearTimeout(docFindTimer);
+    if (!listQuery.trim() && !pageQuery.trim()) {
+      runAllFinds(focusList);
+      if (gen === docFindGen) {
+        listFinding = false;
+        pageFinding = false;
+      }
+      return;
+    }
+    docFindTimer = setTimeout(() => {
+      requestAnimationFrame(() => {
+        if (gen !== docFindGen) return;
+        runAllFinds(focusList);
+        if (gen === docFindGen) {
+          listFinding = false;
+          pageFinding = false;
+        }
+      });
+    }, 40);
+  }
+
   let listHistTimer: ReturnType<typeof setTimeout> | undefined;
   let pageHistTimer: ReturnType<typeof setTimeout> | undefined;
 
   function onListSearchInput(value: string) {
     listQuery = value;
-    runAllFinds(true);
+    scheduleDocFind(true, 'list');
     clearTimeout(listHistTimer);
     if (value.trim()) {
       listHistTimer = setTimeout(() => rememberSearch(value), 400);
@@ -363,7 +408,7 @@
 
   function onPageSearchInput(value: string) {
     pageQuery = value;
-    runAllFinds(false);
+    scheduleDocFind(false, 'page');
     clearTimeout(pageHistTimer);
     if (value.trim()) {
       pageHistTimer = setTimeout(() => rememberPageSearch(value), 400);
@@ -372,7 +417,7 @@
 
   function listFindNext() {
     if (listMarks.length === 0) {
-      runAllFinds(true);
+      scheduleDocFind(true, 'list');
       return;
     }
     listIndex = reveal(listMarks, listIndex + 1, 'list');
@@ -380,7 +425,7 @@
 
   function listFindPrev() {
     if (listMarks.length === 0) {
-      runAllFinds(true);
+      scheduleDocFind(true, 'list');
       return;
     }
     listIndex = reveal(listMarks, listIndex - 1, 'list');
@@ -388,7 +433,7 @@
 
   function pageFindNext() {
     if (pageMarks.length === 0) {
-      runAllFinds(false);
+      scheduleDocFind(false, 'page');
       return;
     }
     pageIndex = reveal(pageMarks, pageIndex + 1, 'page');
@@ -396,19 +441,14 @@
 
   function pageFindPrev() {
     if (pageMarks.length === 0) {
-      runAllFinds(false);
+      scheduleDocFind(false, 'page');
       return;
     }
     pageIndex = reveal(pageMarks, pageIndex - 1, 'page');
   }
 
   function onIframeLoad() {
-    runAllFinds(Boolean(listQuery.trim()));
-    if (listQuery.trim()) {
-      window.setTimeout(() => {
-        if (listMarks.length === 0) runAllFinds(true);
-      }, 0);
-    }
+    scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -507,6 +547,7 @@
           onInput={onTreeSearch}
           onClear={clearSearch}
           onPick={pickHistory}
+          onRemove={removeSearchHistory}
         />
         {#if query.trim()}
           <div class="muted">
@@ -574,10 +615,12 @@
                 placeholder="From list search"
                 ariaLabel="Search this page for the document-list search term"
                 history={searchHistory}
+                searching={listFinding}
                 extraClass="list-find-field"
                 onInput={onListSearchInput}
                 onClear={clearListFind}
                 onPick={pickListHistory}
+                onRemove={removeSearchHistory}
               />
               <span class="find-count">
                 {#if listQuery.trim()}
@@ -599,10 +642,12 @@
                 placeholder="Find in page"
                 ariaLabel="Find in the open document"
                 history={pageHistory}
+                searching={pageFinding}
                 extraClass="page-find-field"
                 onInput={onPageSearchInput}
                 onClear={clearPageFind}
                 onPick={pickPageHistory}
+                onRemove={removePageHistory}
                 bindInput={(el) => {
                   pageFindInput = el;
                 }}
