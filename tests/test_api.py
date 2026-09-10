@@ -13,8 +13,12 @@ def docs_tree(tmp_path: Path) -> dict[str, Path]:
     root = tmp_path / "html-docs"
     nested = root / "guides"
     nested.mkdir(parents=True)
-    (root / "index.html").write_text("<html><body>home</body></html>", encoding="utf-8")
-    (nested / "intro.htm").write_text("<html><body>intro</body></html>", encoding="utf-8")
+    (root / "index.html").write_text(
+        "<html><body>home ALPHAUNIQUE</body></html>", encoding="utf-8"
+    )
+    (nested / "intro.htm").write_text(
+        "<html><body>intro BETAUNIQUE</body></html>", encoding="utf-8"
+    )
     (nested / "notes.txt").write_text("not html", encoding="utf-8")
     outside = tmp_path / "secret.html"
     outside.write_text("<html>secret</html>", encoding="utf-8")
@@ -55,6 +59,13 @@ def test_settings_round_trip(client: TestClient):
     patched = client.patch("/api/settings", json={"last_document": {"root_id": "x", "rel": "a.html"}})
     assert patched.status_code == 200
     assert patched.json()["last_document"]["rel"] == "a.html"
+    assert patched.json()["sidebar_width"] == 320
+    width = client.patch("/api/settings", json={"sidebar_width": 420})
+    assert width.status_code == 200
+    assert width.json()["sidebar_width"] == 420
+    assert client.get("/api/settings").json()["sidebar_width"] == 420
+    clamped = client.patch("/api/settings", json={"sidebar_width": 12})
+    assert clamped.json()["sidebar_width"] == 160
 
 
 def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: Path):
@@ -109,6 +120,93 @@ def test_rejects_path_traversal(client: TestClient, docs_tree: dict[str, Path]):
     abs_win = str(docs_tree["outside"]).replace("\\", "/")
     r = client.get(f"/view/{root_id}/{abs_win}")
     assert r.status_code in (400, 404)
+
+
+def test_content_search_uses_visible_text_not_tags(client: TestClient, docs_tree: dict[str, Path]):
+    tagged = docs_tree["root"] / "tagged.html"
+    tagged.write_text(
+        '<html><head><title>TITLEONLYTOKEN</title></head><body>'
+        '<div class="TAGONLYTOKEN">visible copy</div>'
+        "<script>SCRIPTONLYTOKEN</script>"
+        "<!-- COMMENTONLYTOKEN -->"
+        '<div hidden>HIDDENONLYTOKEN</div>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    named = docs_tree["root"] / "FILENAMEONLYTOKEN.html"
+    named.write_text("<html><body>nope</body></html>", encoding="utf-8")
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    for q in (
+        "TAGONLYTOKEN",
+        "SCRIPTONLYTOKEN",
+        "TITLEONLYTOKEN",
+        "COMMENTONLYTOKEN",
+        "HIDDENONLYTOKEN",
+        "FILENAMEONLYTOKEN",
+        "guides",
+        "tagged.html",
+    ):
+        assert client.get("/api/documents", params={"q": q}).json()["documents"] == [], q
+    visible = client.get("/api/documents", params={"q": "visible copy"}).json()["documents"]
+    assert {d["rel"] for d in visible} == {"tagged.html"}
+
+
+def test_content_search_includes_css_collapsed_sections(client: TestClient, docs_tree: dict[str, Path]):
+    root = docs_tree["root"]
+    (root / "docs.css").write_text(".height-container { display: none; }", encoding="utf-8")
+    (root / "open.html").write_text(
+        "<html><head><link rel='stylesheet' href='docs.css'></head>"
+        "<body><p>noURLResponse is visible here</p></body></html>",
+        encoding="utf-8",
+    )
+    (root / "collapsed.html").write_text(
+        "<html><head><link rel='stylesheet' href='docs.css'></head>"
+        "<body><p>other</p><div class='height-container'>noURLResponse</div></body></html>",
+        encoding="utf-8",
+    )
+    client.post("/api/roots", json={"path": str(root)})
+    rels = {d["rel"] for d in client.get("/api/documents", params={"q": "nourlresponse"}).json()["documents"]}
+    assert rels == {"open.html", "collapsed.html"}
+
+
+def test_content_search_filters_html_files(client: TestClient, docs_tree: dict[str, Path]):
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    alpha = client.get("/api/documents", params={"q": "ALPHAUNIQUE"}).json()["documents"]
+    assert {d["rel"] for d in alpha} == {"index.html"}
+    beta = client.get("/api/documents", params={"q": "BETAUNIQUE"}).json()["documents"]
+    assert {d["rel"] for d in beta} == {"guides/intro.htm"}
+    none = client.get("/api/documents", params={"q": "NO_SUCH_TOKEN"}).json()["documents"]
+    assert none == []
+
+
+def test_tree_hides_folders_without_matches(client: TestClient, docs_tree: dict[str, Path]):
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    full = client.get("/api/tree").json()
+    assert full["file_count"] == 2
+    root_node = full["tree"][0]
+    names = {c["name"] for c in root_node["children"]}
+    assert "guides" in names
+    assert "index.html" in names
+
+    filtered = client.get("/api/tree", params={"q": "ALPHAUNIQUE"}).json()
+    assert filtered["file_count"] == 1
+    children = filtered["tree"][0]["children"]
+    assert [c["name"] for c in children] == ["index.html"]
+
+
+def test_set_root_replaces_previous(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
+    other = tmp_path / "other-docs"
+    other.mkdir()
+    (other / "only.html").write_text("<html>only</html>", encoding="utf-8")
+    first = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    assert first.status_code == 200
+    replaced = client.put("/api/roots", json={"path": str(other)})
+    assert replaced.status_code == 200, replaced.text
+    roots = client.get("/api/roots").json()["roots"]
+    assert len(roots) == 1
+    assert roots[0]["path"] == str(other.resolve())
+    rels = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert rels == {"only.html"}
 
 
 def test_delete_root(client: TestClient, docs_tree: dict[str, Path]):

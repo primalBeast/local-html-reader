@@ -156,7 +156,9 @@ uv run lhr serve --open
 
 ## 6. First-run behavior
 
-On first start the app has **no documents folders**. Paste an absolute Windows path (for example `D:\Notes\html`) and click **Add folder**. The app lists `.html` / `.htm` files under that folder (recursive). Click a file to view it.
+On first start the app has **no documents folder**. Open **Folder → Set root folder…** and paste an absolute Windows path (for example `D:\Notes\html`). The left pane shows that folder tree (`.html` / `.htm` only). Click a file to open it in the larger right pane.
+
+The left search box looks **inside** HTML files and hides files that do not contain the text. The right-pane **Find in page** box searches only the open document (Ctrl+F).
 
 HTML files are **not copied**. They stay on disk.
 

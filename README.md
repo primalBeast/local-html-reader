@@ -53,8 +53,11 @@ uv run lhr doctor
 
 ### First run
 
-Add one or more **documents-root** folders (absolute Windows paths). The app recursively
-lists `.html` / `.htm` under those roots. Click a file to view it.
+Use **Folder → Set root folder…** and paste an absolute Windows path. The left pane
+shows the folder tree of `.html` / `.htm` files. Click a file to open it in the right pane.
+
+Left search filters files whose **contents** match. Right-pane **Find in page** searches
+only the open document.
 
 ### Data location
 

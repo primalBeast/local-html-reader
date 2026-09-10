@@ -26,6 +26,16 @@ def create_root(body: RootCreate) -> dict:
     return rec
 
 
+@router.put("")
+def replace_root(body: RootCreate) -> dict:
+    """Set the single documents-root folder from the app menu."""
+    try:
+        rec = documents.set_root(body.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return rec
+
+
 @router.delete("/{root_id}")
 def delete_root(root_id: str) -> dict:
     if not documents.remove_root(root_id):

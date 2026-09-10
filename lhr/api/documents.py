@@ -23,6 +23,17 @@ def list_documents(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/api/tree")
+def document_tree(
+    q: str | None = Query(default=None),
+    root_id: str | None = Query(default=None),
+) -> dict:
+    try:
+        return documents.document_tree(query=q, root_id=root_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/view/{root_id}/{rel_path:path}")
 def view_file(root_id: str, rel_path: str):
     rel = unquote(rel_path or "")

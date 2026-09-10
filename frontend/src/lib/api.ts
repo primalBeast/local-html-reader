@@ -13,10 +13,22 @@ export type DocumentHit = {
   mtime: number;
 };
 
+export type TreeNode = {
+  name: string;
+  rel: string;
+  kind: 'dir' | 'file';
+  root_id: string;
+  root_path: string;
+  size?: number;
+  mtime?: number;
+  children?: TreeNode[];
+};
+
 export type Settings = {
   schema_version: number;
   roots: Array<{ id: string; path: string }>;
   last_document: { root_id: string; rel: string } | null;
+  sidebar_width: number;
   window: { last_host: string; last_port: number };
 };
 
@@ -51,6 +63,8 @@ export const api = {
   roots: () => request<{ roots: Root[] }>('/api/roots'),
   addRoot: (path: string) =>
     request<Root>('/api/roots', { method: 'POST', body: JSON.stringify({ path }) }),
+  setRoot: (path: string) =>
+    request<Root>('/api/roots', { method: 'PUT', body: JSON.stringify({ path }) }),
   removeRoot: (id: string) =>
     request<{ ok: boolean; id: string }>(`/api/roots/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -64,6 +78,15 @@ export const api = {
       `/api/documents${qs ? `?${qs}` : ''}`,
     );
   },
+  tree: (q?: string, rootId?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (rootId) params.set('root_id', rootId);
+    const qs = params.toString();
+    return request<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }>(
+      `/api/tree${qs ? `?${qs}` : ''}`,
+    );
+  },
 };
 
 export function viewUrl(rootId: string, rel: string): string {
@@ -74,4 +97,15 @@ export function viewUrl(rootId: string, rel: string): string {
     .map(encodeURIComponent)
     .join('/');
   return `/view/${encodeURIComponent(rootId)}/${parts}`;
+}
+
+export function nodeToHit(node: TreeNode): DocumentHit {
+  return {
+    root_id: node.root_id,
+    root_path: node.root_path,
+    rel: node.rel,
+    name: node.name,
+    size: node.size ?? 0,
+    mtime: node.mtime ?? 0,
+  };
 }
