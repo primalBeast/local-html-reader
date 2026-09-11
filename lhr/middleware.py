@@ -27,7 +27,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault("Cache-Control", "no-store")
             return response
 
-        response.headers.setdefault("X-Frame-Options", "DENY")
+        # SAMEORIGIN so side-by-side.html can iframe two copies of the SPA.
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; "
@@ -37,7 +38,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "font-src 'self' data:; "
             "connect-src 'self'; "
             "frame-src 'self'; "
-            "frame-ancestors 'none'; "
+            "frame-ancestors 'self'; "
             "base-uri 'self'; "
             "form-action 'self'",
         )

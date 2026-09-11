@@ -291,7 +291,7 @@ input[type="text"]:focus {
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--shadow);
-  max-height: 220px;
+  max-height: min(50vh, 420px);
   overflow: auto;
 }
 
@@ -303,8 +303,13 @@ input[type="text"]:focus {
   border-radius: 6px;
 }
 
-.search-history-row:hover {
+.search-history-row:hover,
+.search-history-row.active {
   background: var(--bg-hover);
+}
+
+.search-history-row.active {
+  outline: 1px solid rgba(110, 168, 254, 0.45);
 }
 
 .search-history-term {

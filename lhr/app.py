@@ -20,6 +20,10 @@ from lhr.sync import clear_subscribers, run_poller, set_loop
 logger = logging.getLogger("lhr.app")
 
 
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
 def frontend_dist() -> Path:
     here = Path(__file__).resolve()
     candidates = [
@@ -72,6 +76,14 @@ def create_app() -> FastAPI:
     if assets.is_dir():
         app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
 
+    @app.get("/side-by-side.html")
+    @app.get("/side-by-side")
+    def side_by_side():
+        path = repo_root() / "side-by-side.html"
+        if not path.is_file():
+            return JSONResponse({"detail": "side-by-side.html missing"}, status_code=404)
+        return FileResponse(path, media_type="text/html; charset=utf-8")
+
     @app.get("/favicon.ico")
     def favicon():
         fav = dist / "favicon.ico"
@@ -83,6 +95,10 @@ def create_app() -> FastAPI:
     def spa_fallback(full_path: str, request: Request):
         if full_path.startswith("api") or full_path.startswith("view"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
+        if full_path in ("side-by-side.html", "side-by-side"):
+            dual = repo_root() / "side-by-side.html"
+            if dual.is_file():
+                return FileResponse(dual, media_type="text/html; charset=utf-8")
         candidate = dist / full_path
         if full_path and candidate.is_file():
             try:

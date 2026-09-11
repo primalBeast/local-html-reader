@@ -44,6 +44,15 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, docs_tree: dict[str,
         yield c
 
 
+def test_side_by_side_page(client: TestClient):
+    r = client.get("/side-by-side.html")
+    assert r.status_code == 200
+    assert b"<iframe" in r.content
+    assert r.headers.get("x-frame-options") == "SAMEORIGIN"
+    spa = client.get("/")
+    assert spa.headers.get("x-frame-options") == "SAMEORIGIN"
+
+
 def test_health(client: TestClient):
     r = client.get("/health")
     assert r.status_code == 200

@@ -13,6 +13,8 @@ echo Node.js is not required to run the app.
 echo.
 
 set "FAILED=0"
+rem Corporate laptops often need the Windows certificate store (not webpki).
+set "UV_NATIVE_TLS=1"
 
 call :refresh_uv_path
 where uv >nul 2>&1
@@ -48,8 +50,8 @@ if not exist "lhr\cli.py" (
 echo [OK]   repo files present
 echo.
 
-echo [..] Installing Python 3.12+ and app dependencies (uv sync^)
-uv sync
+echo [..] Installing Python 3.12+ and app dependencies (uv sync --native-tls^)
+uv sync --native-tls
 if errorlevel 1 (
   echo [FAIL] uv sync failed.
   set "FAILED=1"

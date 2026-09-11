@@ -166,7 +166,6 @@
       tree = data.tree;
       fileCount = data.file_count;
       truncated = data.truncated;
-      if (q) rememberSearch(q);
     } finally {
       if (gen === searchGen) searching = false;
     }
@@ -353,7 +352,6 @@
 
   function pickListHistory(term: string) {
     listQuery = term;
-    rememberSearch(term);
     scheduleDocFind(true, 'list');
   }
 
@@ -364,7 +362,6 @@
 
   function pickPageHistory(term: string) {
     pageQuery = term;
-    rememberPageSearch(term);
     scheduleDocFind(false, 'page');
   }
 
@@ -430,25 +427,14 @@
     }, 40);
   }
 
-  let listHistTimer: ReturnType<typeof setTimeout> | undefined;
-  let pageHistTimer: ReturnType<typeof setTimeout> | undefined;
-
   function onListSearchInput(value: string) {
     listQuery = value;
     scheduleDocFind(true, 'list');
-    clearTimeout(listHistTimer);
-    if (value.trim()) {
-      listHistTimer = setTimeout(() => rememberSearch(value), 400);
-    }
   }
 
   function onPageSearchInput(value: string) {
     pageQuery = value;
     scheduleDocFind(false, 'page');
-    clearTimeout(pageHistTimer);
-    if (value.trim()) {
-      pageHistTimer = setTimeout(() => rememberPageSearch(value), 400);
-    }
   }
 
   function listFindNext() {
@@ -586,6 +572,7 @@
           onClear={clearSearch}
           onPick={pickHistory}
           onRemove={removeSearchHistory}
+          onCommitHistory={rememberSearch}
         />
         {#if query.trim()}
           <div class="muted">
@@ -659,6 +646,7 @@
                 onClear={clearListFind}
                 onPick={pickListHistory}
                 onRemove={removeSearchHistory}
+                onCommitHistory={rememberSearch}
               />
               <span class="find-count">
                 {#if listQuery.trim()}
@@ -686,6 +674,7 @@
                 onClear={clearPageFind}
                 onPick={pickPageHistory}
                 onRemove={removePageHistory}
+                onCommitHistory={rememberPageSearch}
                 bindInput={(el) => {
                   pageFindInput = el;
                 }}
