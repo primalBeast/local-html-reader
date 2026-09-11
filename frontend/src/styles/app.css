@@ -557,13 +557,15 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  flex: 1 1 200px;
-  max-width: 100%;
+  flex: 0 1 16rem;
+  max-width: min(16rem, 100%);
   min-width: 0;
 }
 
 .page-find .search-wrap {
-  flex: 1 1 140px;
+  flex: 1 1 auto;
+  width: 11rem;
+  max-width: min(11rem, 100%);
   min-width: 0;
 }
 

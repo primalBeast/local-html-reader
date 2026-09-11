@@ -11,6 +11,7 @@
   let fileCount = $state(0);
   let truncated = $state(false);
   let query = $state('');
+  let appliedQuery = $state('');
   let searching = $state(false);
   let searchHistory = $state<string[]>([]);
   let pageHistory = $state<string[]>([]);
@@ -160,6 +161,7 @@
 
   async function refreshTree() {
     const q = query.trim();
+    appliedQuery = q;
     const gen = ++searchGen;
     searching = Boolean(q);
     try {
@@ -318,20 +320,20 @@
     persistSidebar(clampSidebar(next));
   }
 
-  let searchTimer: ReturnType<typeof setTimeout> | undefined;
-  function onTreeSearch(value: string) {
+  function onTreeType(value: string) {
     query = value;
-    listQuery = value;
+  }
+
+  function commitTreeSearch() {
+    listQuery = query;
+    searching = Boolean(query.trim());
     scheduleDocFind(true, 'list');
-    searching = Boolean(value.trim());
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      void refreshTree();
-    }, 200);
+    void refreshTree();
   }
 
   function clearSearch() {
     query = '';
+    appliedQuery = '';
     listQuery = '';
     searching = false;
     searchGen += 1;
@@ -429,13 +431,19 @@
     }, 40);
   }
 
-  function onListSearchInput(value: string) {
+  function onListType(value: string) {
     listQuery = value;
+  }
+
+  function commitListSearch() {
     scheduleDocFind(true, 'list');
   }
 
-  function onPageSearchInput(value: string) {
+  function onPageType(value: string) {
     pageQuery = value;
+  }
+
+  function commitPageSearch() {
     scheduleDocFind(false, 'page');
   }
 
@@ -582,13 +590,14 @@
           ariaLabel="Search documents by text"
           history={searchHistory}
           searching={searching}
-          onInput={onTreeSearch}
+          onInput={onTreeType}
           onClear={clearSearch}
           onPick={pickHistory}
           onRemove={removeSearchHistory}
           onCommitHistory={rememberSearch}
+          onSearch={commitTreeSearch}
         />
-        {#if query.trim()}
+        {#if searching || appliedQuery}
           <div class="muted">
             {#if searching}
               Searching files…
@@ -612,7 +621,7 @@
           </div>
         {:else if tree.length === 0}
           <div class="empty">
-            {#if query.trim()}
+            {#if appliedQuery}
               No HTML files contain that text.
             {:else}
               No .html / .htm files under the root folder.
@@ -668,11 +677,12 @@
                 history={searchHistory}
                 searching={listFinding}
                 extraClass="list-find-field"
-                onInput={onListSearchInput}
+                onInput={onListType}
                 onClear={clearListFind}
                 onPick={pickListHistory}
                 onRemove={removeSearchHistory}
                 onCommitHistory={rememberSearch}
+                onSearch={commitListSearch}
               />
               {#if listQuery.trim()}
                 <span class="find-count">
@@ -696,11 +706,12 @@
                 history={pageHistory}
                 searching={pageFinding}
                 extraClass="page-find-field"
-                onInput={onPageSearchInput}
+                onInput={onPageType}
                 onClear={clearPageFind}
                 onPick={pickPageHistory}
                 onRemove={removePageHistory}
                 onCommitHistory={rememberPageSearch}
+                onSearch={commitPageSearch}
                 bindInput={(el) => {
                   pageFindInput = el;
                 }}

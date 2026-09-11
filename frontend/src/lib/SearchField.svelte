@@ -13,6 +13,7 @@
     onPick,
     onRemove,
     onCommitHistory,
+    onSearch,
     bindInput,
   }: {
     value: string;
@@ -26,6 +27,7 @@
     onPick: (term: string) => void;
     onRemove?: (term: string) => void;
     onCommitHistory?: (term: string) => void;
+    onSearch?: (value: string) => void;
     bindInput?: (el: HTMLInputElement | null) => void;
   } = $props();
 
@@ -49,9 +51,14 @@
     highlight = null;
   }
 
+  function runSearch() {
+    onSearch?.(value);
+  }
+
   function commitHistoryOnDismiss() {
     if (committedOnDismiss) return;
     committedOnDismiss = true;
+    runSearch();
     const term = value.trim();
     if (term) onCommitHistory?.(term);
     closeList();
@@ -125,6 +132,7 @@
     class:has-clear={Boolean(value)}
     class:has-spinner={searching}
     oninput={(e) => {
+      committedOnDismiss = false;
       closeList();
       onInput(e.currentTarget.value);
     }}
@@ -155,12 +163,13 @@
         return;
       }
       if (e.key === 'Enter') {
-        if (applyHighlight()) {
-          e.preventDefault();
-          return;
-        }
+        e.preventDefault();
+        if (applyHighlight()) return;
+        runSearch();
         const term = value.trim();
         if (term) onCommitHistory?.(term);
+        committedOnDismiss = true;
+        closeList();
         return;
       }
       if (e.key === 'Tab') {
