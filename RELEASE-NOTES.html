@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local HTML Reader — Release notes</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --panel: #161a22;
+        --elevated: #12151c;
+        --border: #2a3140;
+        --text: #e8eaed;
+        --muted: #9aa3b2;
+        --faint: #6b7385;
+        --accent: #6ea8fe;
+        --chip: #232937;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", Inter, system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      .wrap {
+        max-width: 820px;
+        margin: 0 auto;
+        padding: 2.2rem 1.25rem 4rem;
+      }
+      header {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1.4rem;
+        margin-bottom: 1.6rem;
+      }
+      h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.75rem;
+        letter-spacing: -0.02em;
+      }
+      .lede {
+        margin: 0;
+        color: var(--muted);
+        max-width: 62ch;
+      }
+      .meta {
+        margin-top: 0.85rem;
+        font-size: 0.82rem;
+        color: var(--faint);
+        font-family: "Cascadia Mono", "SF Mono", ui-monospace, monospace;
+      }
+      article {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 1.15rem 1.25rem 1.05rem;
+        margin: 0 0 1rem;
+      }
+      article.unreleased {
+        border-color: rgba(110, 168, 254, 0.45);
+        box-shadow: 0 0 0 1px rgba(110, 168, 254, 0.12);
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.45rem 0.75rem;
+        margin-bottom: 0.65rem;
+      }
+      h2 {
+        margin: 0;
+        font-size: 1.12rem;
+      }
+      .chip {
+        display: inline-block;
+        background: var(--chip);
+        color: var(--accent);
+        border-radius: 999px;
+        padding: 0.12rem 0.55rem;
+        font-size: 0.72rem;
+        font-family: "Cascadia Mono", "SF Mono", ui-monospace, monospace;
+      }
+      .date {
+        color: var(--faint);
+        font-size: 0.8rem;
+      }
+      ul {
+        margin: 0.2rem 0 0;
+        padding-left: 1.15rem;
+      }
+      li { margin: 0.28rem 0; }
+      li strong { font-weight: 650; }
+      a { color: var(--accent); }
+      footer {
+        margin-top: 1.5rem;
+        color: var(--faint);
+        font-size: 0.78rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Local HTML Reader</h1>
+        <p class="lede">
+          Release notes for the local-first HTML documentation browser
+          (<code>local-html-reader</code>). Newest changes first.
+        </p>
+        <p class="meta">https://github.com/primalBeast/local-html-reader · bind 127.0.0.1:8766</p>
+      </header>
+
+      <article>
+        <div class="row">
+          <h2>Path display, copy menu, and release notes</h2>
+          <span class="chip">165aa3f</span>
+          <span class="date">2026-09-10</span>
+        </div>
+        <ul>
+          <li><strong>Viewer bar.</strong> Filename and search tools are on separate rows so nothing overlaps in a narrow window. The bar shows the relative path and filename from the documents root. Hover for the full absolute path.</li>
+          <li><strong>Copy path.</strong> Right-click a filename in the tree or the right-pane title for <em>Copy full path</em> and <em>Copy relative path</em>.</li>
+          <li><strong>Release notes.</strong> <code>RELEASE-NOTES.html</code> in the project root. Commit-and-push updates this file in the same commit.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>Search history, side-by-side view, native TLS</h2>
+          <span class="chip">103cfe5</span>
+          <span class="date">2026-09-10</span>
+        </div>
+        <ul>
+          <li>History lists every saved term. It opens on left-click or <kbd>Down</kbd>, hides while typing, and closes on blur or an outside click.</li>
+          <li><kbd>Up</kbd>/<kbd>Down</kbd> highlight terms; <kbd>Enter</kbd> applies the highlighted term. A term is saved only when you leave the field with text, or press <kbd>Enter</kbd> in the box.</li>
+          <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> cycle search boxes left-to-right and wrap.</li>
+          <li><code>side-by-side.html</code> shows two app copies at <a href="http://127.0.0.1:8766/side-by-side.html">http://127.0.0.1:8766/side-by-side.html</a> (bookmark that URL, not the file on disk).</li>
+          <li><code>install.cmd</code> runs <code>uv sync --native-tls</code> and sets <code>UV_NATIVE_TLS=1</code> so corporate Windows certificate stores work. This is also fine on a home PC.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>Live history across windows</h2>
+          <span class="chip">217aff8</span>
+          <span class="date">2026-09-10</span>
+        </div>
+        <ul>
+          <li>Adding or deleting a search term updates every open window immediately.</li>
+          <li>Settings writes use a file lock so two instances cannot overwrite each other.</li>
+          <li>Changes are pushed over Server-Sent Events; other processes sharing the data dir pick them up from <code>settings.json</code>.</li>
+          <li>Each window still keeps its own open document and pane width.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>History delete and in-page find spinners</h2>
+          <span class="chip">451e8c1</span>
+          <span class="date">2026-09-10</span>
+        </div>
+        <ul>
+          <li>Each recent-search row has a white × in a dark red circle to remove that term.</li>
+          <li><em>From list search</em> and <em>Find in page</em> show a spinner while the open HTML file is scanned.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>Search UI: spinner, clear, history</h2>
+          <span class="chip">6c1e2ba</span>
+          <span class="date">2026-09-10</span>
+        </div>
+        <ul>
+          <li>Left-pane search shows a spinner and “Searching files…” while the tree is scanned.</li>
+          <li>Clear (×) and recent-search history on all search fields.</li>
+          <li>Right-pane find tools are centered over the document view.</li>
+          <li>List-search history is shared; Find-in-page history is separate.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>Documentation browser</h2>
+          <span class="chip">1beeec6</span>
+          <span class="date">2026-09-09</span>
+        </div>
+        <ul>
+          <li><strong>Folder → Set root folder…</strong> chooses the documents root (absolute Windows path). HTML files stay on disk.</li>
+          <li>Left pane is a folder tree of <code>.html</code> / <code>.htm</code> files. The right pane is larger and shows the page.</li>
+          <li>Left search looks at visible document text, including collapsed Jazzy sections. Opening a hit expands the collapsed block and highlights the term.</li>
+          <li>Right pane has <em>From list search</em> (prefilled from the left) and independent <em>Find in page</em>.</li>
+          <li>The divider between panes is draggable; width is remembered.</li>
+          <li>Path sandbox: the API never serves files outside configured roots.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
+          <h2>Initial scaffold</h2>
+          <span class="chip">0f5b8b7</span>
+          <span class="date">2026-09-09</span>
+        </div>
+        <ul>
+          <li>Local-first FastAPI + Svelte 5 app: Python package <code>lhr</code>, CLI <code>lhr serve</code> / <code>lhr doctor</code>.</li>
+          <li>Binds <strong>127.0.0.1:8766</strong> only. No auth. Production UI committed in <code>frontend/dist</code>.</li>
+          <li>Windows <code>install.cmd</code> and <code>start.cmd</code>, MIT license, private-then-public GitHub repo <code>primalBeast/local-html-reader</code>.</li>
+          <li>Data directory: <code>%OneDrive%\Local HTML Reader</code> (fallback <code>%APPDATA%\LocalHtmlReader</code>), override <code>LHR_DATA_DIR</code>.</li>
+        </ul>
+      </article>
+
+      <footer>
+        Newest first. Each GitHub commit-and-push adds an entry here.
+      </footer>
+    </div>
+  </body>
+</html>

@@ -5,10 +5,12 @@
     nodes,
     selected,
     onOpen,
+    onPathMenu,
   }: {
     nodes: TreeNode[];
     selected: DocumentHit | null;
     onOpen: (doc: DocumentHit) => void;
+    onPathMenu?: (event: MouseEvent, node: TreeNode) => void;
   } = $props();
 
   let collapsed = $state<Record<string, boolean>>({});
@@ -39,7 +41,12 @@
         <button class="twist" type="button" onclick={(e) => toggle(node, e)} aria-label={isExpanded(node) ? 'Collapse' : 'Expand'}>
           {isExpanded(node) ? '▾' : '▸'}
         </button>
-        <span class="folder-name" title={node.root_path}>{node.name}</span>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span
+          class="folder-name"
+          title={node.root_path}
+          oncontextmenu={(e) => onPathMenu?.(e, node)}
+        >{node.name}</span>
       </div>
       {#if isExpanded(node) && node.children?.length}
         {@render branch(node.children, depth + 1)}
@@ -51,6 +58,7 @@
         type="button"
         style={`padding-left: ${24 + depth * 14}px`}
         onclick={() => onOpen(nodeToHit(node))}
+        oncontextmenu={(e) => onPathMenu?.(e, node)}
         title={node.rel}
       >
         {node.name}

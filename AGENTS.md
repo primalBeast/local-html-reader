@@ -25,3 +25,8 @@
 
 - `install.cmd` / `start.cmd` are double-click entrypoints.
 - Refresh PATH for `%USERPROFILE%\.local\bin` (uv) before calling `uv`.
+- `install.cmd` uses `uv sync --native-tls` / `UV_NATIVE_TLS=1` (works on home PCs too).
+
+## GitHub
+
+- When the user asks to **commit and push**, first add a dated entry to `RELEASE-NOTES.html` in the project root describing those changes (same HTML style as existing notes). Include that file in the commit, then push.

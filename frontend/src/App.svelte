@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import Tree from './lib/Tree.svelte';
   import SearchField from './lib/SearchField.svelte';
-  import { api, viewUrl, type DocumentHit, type Root, type Settings, type TreeNode } from './lib/api';
+  import PathContextMenu from './lib/PathContextMenu.svelte';
+  import { api, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Root, type Settings, type TreeNode } from './lib/api';
   import { applyFinds, reveal } from './lib/pageFind';
 
   let roots = $state<Root[]>([]);
@@ -19,6 +20,7 @@
   let version = $state('');
 
   let menuOpen = $state(false);
+  let pathMenu = $state<{ x: number; y: number; full: string; rel: string } | null>(null);
   let folderDialog = $state(false);
   let folderPath = $state('');
   let settingFolder = $state(false);
@@ -489,6 +491,7 @@
       return;
     }
     if (event.key === 'Escape') {
+      pathMenu = null;
       if (folderDialog) folderDialog = false;
       menuOpen = false;
       if (inField && target === pageFindInput) {
@@ -504,6 +507,17 @@
 
   function onWindowClick() {
     menuOpen = false;
+  }
+
+  function openPathMenu(event: MouseEvent, rootPath: string, rel: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    pathMenu = {
+      x: event.clientX,
+      y: event.clientY,
+      full: windowsFullPath(rootPath, rel),
+      rel: windowsRelPath(rel),
+    };
   }
 
   onMount(() => {
@@ -605,7 +619,12 @@
             {/if}
           </div>
         {:else}
-          <Tree nodes={tree} {selected} onOpen={openDoc} />
+          <Tree
+            nodes={tree}
+            {selected}
+            onOpen={openDoc}
+            onPathMenu={(e, node) => openPathMenu(e, node.root_path, node.rel)}
+          />
         {/if}
       </div>
     </section>
@@ -626,7 +645,14 @@
     <section class="viewer">
       {#if selected}
         <div class="viewer-bar">
-          <code class="doc-path" title={selected.rel}>{selected.rel}</code>
+          <code
+            class="doc-path"
+            title={windowsFullPath(selected.root_path, selected.rel)}
+            oncontextmenu={(e) => {
+              if (!selected) return;
+              openPathMenu(e, selected.root_path, selected.rel);
+            }}
+          >{windowsRelPath(selected.rel)}</code>
           <div class="page-finds">
             <form
               class="page-find list-find"
@@ -648,11 +674,11 @@
                 onRemove={removeSearchHistory}
                 onCommitHistory={rememberSearch}
               />
-              <span class="find-count">
-                {#if listQuery.trim()}
+              {#if listQuery.trim()}
+                <span class="find-count">
                   {listMarks.length ? `${listIndex + 1} / ${listMarks.length}` : '0 / 0'}
-                {/if}
-              </span>
+                </span>
+              {/if}
               <button class="btn-ghost btn-small" type="button" onclick={listFindPrev} disabled={!listMarks.length}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!listQuery.trim()}>Next</button>
             </form>
@@ -679,11 +705,11 @@
                   pageFindInput = el;
                 }}
               />
-              <span class="find-count">
-                {#if pageQuery.trim()}
+              {#if pageQuery.trim()}
+                <span class="find-count">
                   {pageMarks.length ? `${pageIndex + 1} / ${pageMarks.length}` : '0 / 0'}
-                {/if}
-              </span>
+                </span>
+              {/if}
               <button class="btn-ghost btn-small" type="button" onclick={pageFindPrev} disabled={!pageMarks.length}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!pageQuery.trim()}>Next</button>
             </form>
@@ -742,4 +768,16 @@
     </form>
     </div>
   </div>
+{/if}
+
+{#if pathMenu}
+  <PathContextMenu
+    x={pathMenu.x}
+    y={pathMenu.y}
+    full={pathMenu.full}
+    rel={pathMenu.rel}
+    onClose={() => {
+      pathMenu = null;
+    }}
+  />
 {/if}

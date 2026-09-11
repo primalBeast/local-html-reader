@@ -124,6 +124,17 @@ export function viewUrl(rootId: string, rel: string): string {
   return `/view/${encodeURIComponent(rootId)}/${parts}`;
 }
 
+export function windowsRelPath(rel: string): string {
+  const text = (rel || '').replaceAll('/', '\\').replace(/^\\+/, '');
+  return text || '.';
+}
+
+export function windowsFullPath(rootPath: string, rel: string): string {
+  const root = (rootPath || '').replace(/[\\/]+$/, '');
+  const relative = (rel || '').replaceAll('/', '\\').replace(/^\\+/, '');
+  return relative ? `${root}\\${relative}` : root;
+}
+
 export function nodeToHit(node: TreeNode): DocumentHit {
   return {
     root_id: node.root_id,
