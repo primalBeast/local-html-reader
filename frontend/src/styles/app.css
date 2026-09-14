@@ -784,6 +784,26 @@ iframe.doc-frame,
   display: block;
 }
 
+.pdf-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pdf-loading-spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2.5px solid #141820;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.25;
+  animation: lhr-spin 0.7s linear infinite;
+}
+
 .pdf-status {
   position: sticky;
   top: 0.75rem;

@@ -183,7 +183,7 @@
     loadUrl = async (url: string) => {
       const gen = ++loadGen;
       error = null;
-      if (!host?.childElementCount) loading = true;
+      loading = true;
       try {
         const pdfjs = await ensureEngine();
         if (cancelled || gen !== loadGen) return;
@@ -204,6 +204,7 @@
         lastWidth = 0;
         await paintPages();
         if (cancelled || gen !== loadGen) return;
+        loading = false;
         if (frame) frame.scrollTop = 0;
         try {
           await (previous as { destroy?: () => Promise<void> | void } | null)?.destroy?.();
@@ -212,8 +213,8 @@
         }
       } catch (e) {
         if (cancelled || gen !== loadGen) return;
+        loading = false;
         if (!host?.childElementCount) {
-          loading = false;
           error = e instanceof Error ? e.message : String(e);
         }
       }
@@ -259,7 +260,9 @@
     <div class="pdf-pages" bind:this={host}></div>
   </div>
   {#if loading}
-    <div class="pdf-status">Loading PDF…</div>
+    <div class="pdf-loading" role="status" aria-label="Loading PDF">
+      <span class="pdf-loading-spinner"></span>
+    </div>
   {/if}
   {#if error}
     <div class="pdf-status error">{error}</div>
