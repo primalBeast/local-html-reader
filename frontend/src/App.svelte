@@ -653,7 +653,12 @@
     pageIndex = reveal(pageMarks, pageIndex - 1, 'page');
   }
 
+  function isPdfHit(doc: DocumentHit | null): boolean {
+    return Boolean(doc?.rel?.toLowerCase().endsWith('.pdf'));
+  }
+
   function onIframeLoad() {
+    if (isPdfHit(selected)) return;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
@@ -661,12 +666,14 @@
     const target = event.target as HTMLElement | null;
     const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && selected) {
+      if (isPdfHit(selected)) return;
       event.preventDefault();
       pageFindInput?.focus();
       pageFindInput?.select();
       return;
     }
     if (event.key === 'F3' && selected) {
+      if (isPdfHit(selected)) return;
       event.preventDefault();
       if (event.shiftKey) pageFindPrev();
       else pageFindNext();
@@ -1065,13 +1072,23 @@
           </div>
         </div>
         {#key `${selected.root_id}:${selected.rel}`}
-          <iframe
-            bind:this={iframeEl}
-            title={selected.name}
-            src={viewUrl(selected.root_id, selected.rel)}
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-            onload={onIframeLoad}
-          ></iframe>
+          {#if isPdfHit(selected)}
+            <embed
+              class="doc-frame"
+              type="application/pdf"
+              title={selected.name}
+              src={viewUrl(selected.root_id, selected.rel)}
+            />
+          {:else}
+            <iframe
+              class="doc-frame"
+              bind:this={iframeEl}
+              title={selected.name}
+              src={viewUrl(selected.root_id, selected.rel)}
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+              onload={onIframeLoad}
+            ></iframe>
+          {/if}
         {/key}
       {:else}
         <div class="empty viewer-empty">

@@ -154,6 +154,12 @@ def test_lists_and_searches_markdown_and_pdf(client: TestClient, docs_tree: dict
     # Extractable text PDFs match; if the stub has no text layer, listing still includes it.
     if pdf_hits:
         assert {d["rel"] for d in pdf_hits} == {"sheet.pdf"}
+    root_id = client.get("/api/roots").json()["roots"][0]["id"]
+    pdf_view = client.get(f"/view/{root_id}/sheet.pdf")
+    assert pdf_view.status_code == 200
+    assert "application/pdf" in pdf_view.headers.get("content-type", "")
+    assert "attachment" not in (pdf_view.headers.get("content-disposition") or "").lower()
+    assert pdf_view.content.startswith(b"%PDF")
 
 
 def test_list_and_view_html_under_root(client: TestClient, docs_tree: dict[str, Path]):

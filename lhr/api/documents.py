@@ -101,7 +101,13 @@ def view_file(root_id: str, rel_path: str):
     if suffix in {".html", ".htm"}:
         media = "text/html; charset=utf-8"
     elif suffix == ".pdf":
-        media = "application/pdf"
+        # No filename= — Edge treats Content-Disposition filename in an iframe/embed
+        # as a download and shows "This page has been blocked by Microsoft Edge".
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"},
+        )
     return FileResponse(
         path,
         media_type=media or "application/octet-stream",

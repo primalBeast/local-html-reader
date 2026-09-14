@@ -56,6 +56,7 @@ def _apply_security_headers(headers: MutableHeaders, path: str) -> None:
         "font-src 'self' data:; "
         "connect-src 'self'; "
         "frame-src 'self'; "
+        "object-src 'self'; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'",
