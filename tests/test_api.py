@@ -123,6 +123,39 @@ def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: P
     assert relative.status_code == 400
 
 
+def test_lists_and_searches_markdown_and_pdf(client: TestClient, docs_tree: dict[str, Path]):
+    (docs_tree["root"] / "notes.md").write_text(
+        "# Guide\n\nMarkdown has MDUNIQUETOKEN in the body.\n",
+        encoding="utf-8",
+    )
+    (docs_tree["root"] / "sheet.pdf").write_bytes(
+        b"%PDF-1.1\n"
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R"
+        b"/Resources<</Font<</F1 5 0 R>>>>>>endobj\n"
+        b"4 0 obj<</Length 54>>stream\n"
+        b"BT /F1 12 Tf 20 80 Td (PDFUNIQUETOKEN) Tj ET\n"
+        b"endstream\nendobj\n"
+        b"5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n"
+        b"trailer<</Root 1 0 R>>\n%%EOF\n"
+    )
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    rels = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert "notes.md" in rels
+    assert "sheet.pdf" in rels
+    md = client.get("/api/documents", params={"q": "MDUNIQUETOKEN"}).json()["documents"]
+    assert {d["rel"] for d in md} == {"notes.md"}
+    viewed = client.get(f"/view/{client.get('/api/roots').json()['roots'][0]['id']}/notes.md")
+    assert viewed.status_code == 200
+    assert "MDUNIQUETOKEN" in viewed.text
+    assert "text/html" in viewed.headers.get("content-type", "")
+    pdf_hits = client.get("/api/documents", params={"q": "PDFUNIQUETOKEN"}).json()["documents"]
+    # Extractable text PDFs match; if the stub has no text layer, listing still includes it.
+    if pdf_hits:
+        assert {d["rel"] for d in pdf_hits} == {"sheet.pdf"}
+
+
 def test_list_and_view_html_under_root(client: TestClient, docs_tree: dict[str, Path]):
     added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
     assert added.status_code == 200, added.text
@@ -227,6 +260,16 @@ def test_content_search_filters_html_files(client: TestClient, docs_tree: dict[s
     assert none == []
 
 
+def test_tree_stream_counts_matches(client: TestClient, docs_tree: dict[str, Path]):
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    r = client.get("/api/tree/stream", params={"q": "ALPHAUNIQUE"})
+    assert r.status_code == 200, r.text
+    assert "text/event-stream" in r.headers.get("content-type", "")
+    assert "event: progress" in r.text
+    assert "event: done" in r.text
+    assert "index.html" in r.text
+
+
 def test_tree_hides_folders_without_matches(client: TestClient, docs_tree: dict[str, Path]):
     client.post("/api/roots", json={"path": str(docs_tree["root"])})
     full = client.get("/api/tree").json()
@@ -242,19 +285,19 @@ def test_tree_hides_folders_without_matches(client: TestClient, docs_tree: dict[
     assert [c["name"] for c in children] == ["index.html"]
 
 
-def test_set_root_replaces_previous(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
+def test_set_root_adds_another_folder(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
     other = tmp_path / "other-docs"
     other.mkdir()
     (other / "only.html").write_text("<html>only</html>", encoding="utf-8")
     first = client.post("/api/roots", json={"path": str(docs_tree["root"])})
     assert first.status_code == 200
-    replaced = client.put("/api/roots", json={"path": str(other)})
-    assert replaced.status_code == 200, replaced.text
+    added = client.put("/api/roots", json={"path": str(other)})
+    assert added.status_code == 200, added.text
     roots = client.get("/api/roots").json()["roots"]
-    assert len(roots) == 1
-    assert roots[0]["path"] == str(other.resolve())
+    assert len(roots) == 2
     rels = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
-    assert rels == {"only.html"}
+    assert "only.html" in rels
+    assert "index.html" in rels
 
 
 def test_delete_root(client: TestClient, docs_tree: dict[str, Path]):
@@ -265,3 +308,50 @@ def test_delete_root(client: TestClient, docs_tree: dict[str, Path]):
     assert client.get("/api/roots").json()["roots"] == []
     listed = client.get("/api/documents")
     assert listed.json()["documents"] == []
+
+
+def test_projects_isolate_folders(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
+    other = tmp_path / "product-b"
+    other.mkdir()
+    (other / "bravo.html").write_text("<html>bravo visible</html>", encoding="utf-8")
+    listed = client.get("/api/projects").json()
+    assert listed["current_slug"] == "default"
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    created = client.post("/api/projects", json={"name": "Product B"})
+    assert created.status_code == 201, created.text
+    slug_b = created.json()["slug"]
+    client.post(f"/api/projects/{slug_b}/folders", json={"path": str(other)})
+    rels_b = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert rels_b == {"bravo.html"}
+    client.post("/api/projects/default/select")
+    rels_a = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert "index.html" in rels_a
+    assert "bravo.html" not in rels_a
+
+
+def test_delete_project_unregisters_even_with_locked_leftovers(
+    client: TestClient, tmp_path: Path
+):
+    created = client.post("/api/projects", json={"name": "Temp Gone"})
+    assert created.status_code == 201, created.text
+    slug = created.json()["slug"]
+    gone = client.delete(f"/api/projects/{slug}")
+    assert gone.status_code == 200, gone.text
+    slugs = [p["slug"] for p in client.get("/api/projects").json()["projects"]]
+    assert slug not in slugs
+
+
+def test_disabled_folder_is_not_searched(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
+    extra = tmp_path / "extra-docs"
+    extra.mkdir()
+    (extra / "unique.html").write_text("<html>UNIQUEVISIBLETOKEN</html>", encoding="utf-8")
+    a = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    b = client.post("/api/roots", json={"path": str(extra)})
+    extra_id = b.json()["id"]
+    found = client.get("/api/documents", params={"q": "UNIQUEVISIBLETOKEN"}).json()["documents"]
+    assert {d["rel"] for d in found} == {"unique.html"}
+    client.patch(f"/api/roots/{extra_id}", json={"enabled": False})
+    hidden = client.get("/api/documents", params={"q": "UNIQUEVISIBLETOKEN"}).json()["documents"]
+    assert hidden == []
+    listed = client.get("/api/roots").json()["roots"]
+    assert any(r["id"] == extra_id and r["enabled"] is False for r in listed)

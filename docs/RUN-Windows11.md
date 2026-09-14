@@ -131,7 +131,19 @@ uv run lhr doctor
 
 Easiest: double-click **`start.cmd`**. It starts the server and opens the browser. Leave that window open. If the app is already running, it just opens http://127.0.0.1:8766.
 
-Or:
+**No console flash:** double-click **`start.vbs`** (browser) or **`start-webview.vbs`** (WebView2 window). The helper console starts minimized; restore **Local HTML Reader** from the taskbar for logs.
+
+**WebView2 window (no browser tab):** double-click **`start-webview.vbs`** (no console flash) or **`start-webview.cmd`**. The helper console is **minimized** to the taskbar; restore **Local HTML Reader** there to read logs. Or:
+
+```powershell
+uv run lhr serve --webview
+```
+
+That is the same local server. Close the WebView2 window to stop (if this process started the server). `--open` still opens Edge/Chrome as before. Do not pass both; `--webview` wins.
+
+The WebView2 window has no Windows title bar. Resize from the outer edges. Minimize / maximize / close are on the right of the app toolbar. Maximize fills the monitor work area and leaves the taskbar visible (same as a normal Windows app). **F11** toggles fullscreen. **F5** reloads the UI. **Alt+F4** also quits.
+
+Or browser mode:
 
 ```powershell
 uv run lhr serve --open
@@ -139,28 +151,31 @@ uv run lhr serve --open
 
 - Server binds to **http://127.0.0.1:8766** (local only)
 - `--open` tries to open your default browser (Edge is fine)
+- `--webview` opens a WebView2 app window instead
 - If the browser does not open, go to: [http://127.0.0.1:8766](http://127.0.0.1:8766)
 
-Leave the PowerShell window open while you use the app. Stop the server with **Ctrl+C**.
+Leave the PowerShell window open while you use the app (browser mode). Stop the server with **Ctrl+C**, or close the WebView2 window.
 
 ### Daily start (after the first setup)
 
-Double-click **`start.cmd`**, or:
+Double-click **`start.cmd`** / **`start.vbs`** (browser) or **`start-webview.cmd`** / **`start-webview.vbs`** (WebView2, console minimized), or:
 
 ```powershell
 cd D:\dev\doc-reader   # your clone path
 uv run lhr serve --open
+# or
+uv run lhr serve --webview
 ```
 
 ---
 
 ## 6. First-run behavior
 
-On first start the app has **no documents folder**. Open **Folder → Set root folder…** and paste an absolute Windows path (for example `D:\Notes\html`). The left pane shows that folder tree (`.html` / `.htm` only). Click a file to open it in the larger right pane.
+On first start the app has **no project folders**. Create a project from the top-left menu, then **+ Add folder…** and paste an absolute Windows path (for example `D:\Notes\html`). The left pane shows that folder tree (`.html` / `.htm` / `.md` / `.pdf`). Click a file to open it in the larger right pane.
 
-The left search box looks **inside** HTML files and hides files that do not contain the text. The right-pane **Find in page** box searches only the open document (Ctrl+F).
+The left search box looks **inside** those files and hides files that do not contain the text. The right-pane **Find in page** box searches only the open document (Ctrl+F).
 
-HTML files are **not copied**. They stay on disk.
+Document files are **not copied**. They stay on disk.
 
 ### Where settings are stored (Windows)
 

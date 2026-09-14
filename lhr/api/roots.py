@@ -12,6 +12,10 @@ class RootCreate(BaseModel):
     path: str = Field(min_length=1)
 
 
+class RootEnabled(BaseModel):
+    enabled: bool
+
+
 @router.get("")
 def get_roots() -> dict:
     return {"roots": documents.list_roots()}
@@ -33,6 +37,17 @@ def replace_root(body: RootCreate) -> dict:
         rec = documents.set_root(body.path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return rec
+
+
+@router.patch("/{root_id}")
+def patch_root(root_id: str, body: RootEnabled) -> dict:
+    try:
+        rec = documents.set_root_enabled(root_id, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="documents root not found") from None
     return rec
 
 

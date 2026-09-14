@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,4 +26,30 @@ def write_json(path: Path, data: Any) -> None:
         f.write("\n")
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    last_exc: OSError | None = None
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.05 * (attempt + 1))
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                pass
+            try:
+                with tmp.open("r", encoding="utf-8") as src, path.open("w", encoding="utf-8") as dest:
+                    dest.write(src.read())
+                    dest.flush()
+                    os.fsync(dest.fileno())
+                tmp.unlink(missing_ok=True)
+                return
+            except OSError as copy_exc:
+                last_exc = copy_exc
+                time.sleep(0.05 * (attempt + 1))
+    tmp.unlink(missing_ok=True)
+    if last_exc:
+        raise last_exc
+    raise PermissionError(f"could not write {path}")

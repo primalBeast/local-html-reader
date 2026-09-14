@@ -143,7 +143,17 @@ function wrapSlice(node: Text, start: number, end: number, className: string): H
   return mark;
 }
 
-function wrapMatches(doc: Document, query: string, layer: FindLayer): HTMLElement[] {
+function yieldUi(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function wrapMatches(
+  doc: Document,
+  query: string,
+  layer: FindLayer,
+  onCount?: (n: number) => void,
+  cancelled?: () => boolean,
+): Promise<HTMLElement[]> {
   const q = query.trim();
   if (!q || !doc.body) return [];
   const needle = q.toLowerCase();
@@ -154,14 +164,17 @@ function wrapMatches(doc: Document, query: string, layer: FindLayer): HTMLElemen
   const joined = originals.join('');
   const haystack = joined.toLowerCase();
   if (joined.length !== haystack.length) {
-    return wrapPerNode(nodes, needle, q.length, LAYERS[layer].mark);
+    return wrapPerNode(nodes, needle, q.length, LAYERS[layer].mark, onCount, cancelled);
   }
 
   const hits: number[] = [];
   let idx = haystack.indexOf(needle);
   while (idx !== -1) {
+    if (cancelled?.()) return [];
     hits.push(idx);
+    onCount?.(hits.length);
     idx = haystack.indexOf(needle, idx + needle.length);
+    if (hits.length % 8 === 0) await yieldUi();
   }
   if (hits.length === 0) return [];
 
@@ -194,50 +207,61 @@ function wrapMatches(doc: Document, query: string, layer: FindLayer): HTMLElemen
   return marks;
 }
 
-function wrapPerNode(nodes: Text[], needle: string, matchLen: number, markClass: string): HTMLElement[] {
+async function wrapPerNode(
+  nodes: Text[],
+  needle: string,
+  matchLen: number,
+  markClass: string,
+  onCount?: (n: number) => void,
+  cancelled?: () => boolean,
+): Promise<HTMLElement[]> {
   const marks: HTMLElement[] = [];
+  let found = 0;
   for (let n = nodes.length - 1; n >= 0; n--) {
+    if (cancelled?.()) return [];
     const node = nodes[n];
     const lower = (node.textContent || '').toLowerCase();
     const localHits: number[] = [];
     let idx = lower.indexOf(needle);
     while (idx !== -1) {
       localHits.push(idx);
+      found += 1;
+      onCount?.(found);
       idx = lower.indexOf(needle, idx + matchLen);
     }
     for (let i = localHits.length - 1; i >= 0; i--) {
       const mark = wrapSlice(node, localHits[i], localHits[i] + matchLen, markClass);
       if (mark) marks.unshift(mark);
     }
+    if (found % 8 === 0) await yieldUi();
   }
   return marks;
 }
 
-export function applyFinds(
+export async function applyFinds(
   doc: Document,
   listQuery: string,
   pageQuery: string,
-): { list: HTMLElement[]; page: HTMLElement[] } {
+  onProgress?: (layer: FindLayer, count: number) => void,
+  cancelled?: () => boolean,
+): Promise<{ list: HTMLElement[]; page: HTMLElement[] }> {
   injectStyle(doc);
   clearFind(doc);
   const listQ = listQuery.trim();
   const pageQ = pageQuery.trim();
   if (listQ && pageQ && listQ.toLowerCase() === pageQ.toLowerCase()) {
-    const marks = wrapMatches(doc, listQ, 'list');
+    const marks = await wrapMatches(doc, listQ, 'list', (n) => {
+      onProgress?.('list', n);
+      onProgress?.('page', n);
+    }, cancelled);
     for (const mark of marks) mark.classList.add(LAYERS.page.mark);
     expandCollapsedAround(marks);
     return { list: marks, page: marks };
   }
-  const list = wrapMatches(doc, listQ, 'list');
-  const page = wrapMatches(doc, pageQ, 'page');
+  const list = await wrapMatches(doc, listQ, 'list', (n) => onProgress?.('list', n), cancelled);
+  const page = await wrapMatches(doc, pageQ, 'page', (n) => onProgress?.('page', n), cancelled);
   expandCollapsedAround([...list, ...page]);
   return { list, page };
-}
-
-export function findInDocument(doc: Document, query: string, layer: FindLayer = 'page'): HTMLElement[] {
-  injectStyle(doc);
-  clearFind(doc, layer);
-  return wrapMatches(doc, query, layer);
 }
 
 export function reveal(

@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 ALLOWED = {
     "last_document",
+    "last_project_slug",
+    "projects_epoch",
     "window",
     "roots",
     "sidebar_width",

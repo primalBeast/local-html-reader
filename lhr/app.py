@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from lhr import __version__
-from lhr.api import documents, roots, settings
+from lhr.api import documents, projects, roots, settings
 from lhr.config import get_config
 from lhr.middleware import SecurityHeadersMiddleware, install_cors
 from lhr.sync import clear_subscribers, run_poller, set_loop
@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     app.include_router(settings.router)
+    app.include_router(projects.router)
     app.include_router(roots.router)
     app.include_router(documents.router)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 
 SKIP_TAGS = frozenset({"script", "style", "noscript", "template", "head"})
+HEAD_CHILD_TAGS = frozenset({"title", "meta", "link", "base", "style", "script", "noscript", "template"})
 VOID_TAGS = frozenset(
     {
         "area",
@@ -46,8 +47,21 @@ class VisibleTextParser(HTMLParser):
     def _blocked(self) -> bool:
         return any(skip or hid for _tag, skip, hid in self._stack)
 
+    def _in_head(self) -> bool:
+        return any(name == "head" and skip for name, skip, _hid in self._stack)
+
+    def _pop_tag(self, tag: str) -> None:
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i][0] == tag:
+                del self._stack[i:]
+                return
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
+        # Browsers close <head> when body content starts. Without this, an
+        # unclosed </head> makes every later text node look like head content.
+        if self._in_head() and tag not in HEAD_CHILD_TAGS and tag not in {"html", "head"}:
+            self._pop_tag("head")
         if tag in VOID_TAGS:
             return
         skip = tag in SKIP_TAGS

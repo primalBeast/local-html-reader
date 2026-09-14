@@ -1,11 +1,11 @@
 # Local HTML Reader
 
-A local-first web app for reading HTML documents that already live on your hard drive.
-**No cloud, no upload, no account** — you point it at folders, it lists `.html` / `.htm`
-files, and you read them in the browser.
+A local-first web app for reading HTML, Markdown, and PDF documents that already live
+on your hard drive. **No cloud, no upload, no account** — you group folders into
+projects, and you read them in the browser or a WebView2 window.
 
-HTML files stay where they are. The app data directory only stores settings (configured
-folders and last-opened file).
+Files stay where they are. The app data directory only stores settings, projects, and
+daily backups.
 
 ## How to run (full install guide)
 
@@ -35,6 +35,9 @@ uv sync
 
 # Start the local server and open the browser
 uv run lhr serve --open
+
+# Windows: same server, WebView2 window instead of a browser tab
+uv run lhr serve --webview
 ```
 
 Then open [http://127.0.0.1:8766](http://127.0.0.1:8766) if it did not open automatically.
@@ -42,7 +45,8 @@ Then open [http://127.0.0.1:8766](http://127.0.0.1:8766) if it did not open auto
 **Windows (double-click, after cloning):**
 
 1. `install.cmd` — installs uv + app deps, then checks the install
-2. `start.cmd` — starts the server and opens the browser
+2. `start.cmd` (or `start.vbs`) — starts the server and opens the browser (`start.vbs` hides the console)
+3. `start-webview.cmd` (or `start-webview.vbs`) — same server in a WebView2 window; the helper console starts minimized (open it from the taskbar to read logs)
 
 If you ever see `ModuleNotFoundError: No module named 'lhr'`:
 
@@ -53,8 +57,9 @@ uv run lhr doctor
 
 ### First run
 
-Use **Folder → Set root folder…** and paste an absolute Windows path. The left pane
-shows the folder tree of `.html` / `.htm` files. Click a file to open it in the right pane.
+Create a project from the top-left menu, then **+ Add folder…** and paste an absolute
+Windows path. The left pane lists `.html` / `.htm` / `.md` / `.pdf` files in enabled
+folders. Click a file to open it in the right pane.
 
 Left search filters files whose **contents** match. Right-pane **Find in page** searches
 only the open document.
@@ -80,6 +85,8 @@ or `uv run lhr serve --data-dir path\to\data`.
 
 ```powershell
 uv run lhr serve --open          # start server (127.0.0.1:8766)
+uv run lhr serve --webview       # start server + WebView2 window (Windows)
+                                 # Reload: F5  Fullscreen: F11
 uv run lhr doctor                # diagnose install
 ```
 
@@ -119,6 +126,8 @@ lhr/                     Python package (FastAPI + CLI)
 frontend/                Svelte 5 + Vite SPA
 frontend/dist/           Committed production build (clone-and-run)
 docs/RUN-Windows11.md    Install & run on Windows 11
+start.cmd / start.vbs    Browser launcher (VBS starts minimized)
+start-webview.cmd/.vbs   WebView2 launcher (VBS starts minimized)
 tests/                   pytest suite
 ```
 

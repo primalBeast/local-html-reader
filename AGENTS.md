@@ -23,7 +23,7 @@
 
 ## Windows
 
-- `install.cmd` / `start.cmd` are double-click entrypoints.
+- `install.cmd` / `start.cmd` / `start.vbs` are double-click entrypoints. `start-webview.cmd` / `start-webview.vbs` open a WebView2 window (`uv run lhr serve --webview`).
 - Refresh PATH for `%USERPROFILE%\.local\bin` (uv) before calling `uv`.
 - `install.cmd` uses `uv sync --native-tls` / `UV_NATIVE_TLS=1` (works on home PCs too).
 

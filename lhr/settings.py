@@ -23,6 +23,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "schema_version": 1,
     "roots": [],
     "last_document": None,
+    "last_project_slug": None,
+    "projects_epoch": 0,
+    "backup_retention_days": 30,
     "sidebar_width": SIDEBAR_WIDTH_DEFAULT,
     "search_history": [],
     "page_search_history": [],
@@ -75,6 +78,10 @@ def ensure_data_layout() -> None:
     data_root().mkdir(parents=True, exist_ok=True)
     if not settings_path().exists():
         save_settings(deepcopy(DEFAULT_SETTINGS))
+    from lhr.projects import ensure_projects_dir, migrate_legacy_roots
+
+    ensure_projects_dir()
+    migrate_legacy_roots()
 
 
 def load_settings() -> dict[str, Any]:
@@ -116,6 +123,21 @@ def patch_settings(updates: dict[str, Any]) -> dict[str, Any]:
                 data["roots"] = v
             elif k == "last_document":
                 data["last_document"] = v
+                slug = data.get("last_project_slug")
+                if isinstance(slug, str) and slug:
+                    try:
+                        from lhr.projects import write_last_document
+
+                        write_last_document(slug, v)
+                    except Exception:
+                        pass
+            elif k == "last_project_slug":
+                data["last_project_slug"] = v
+            elif k == "projects_epoch":
+                try:
+                    data["projects_epoch"] = int(v)
+                except (TypeError, ValueError):
+                    pass
             elif k == "sidebar_width":
                 data["sidebar_width"] = clamp_sidebar_width(v)
             elif k == "search_history":

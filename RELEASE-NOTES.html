@@ -113,6 +113,22 @@
 
       <article>
         <div class="row">
+          <h2>Projects, PDF/Markdown, and WebView2</h2>
+          <span class="chip">b235678</span>
+          <span class="date">2026-09-14</span>
+        </div>
+        <ul>
+          <li><strong>Projects.</strong> Named projects each have their own folder list. Check or uncheck folders, add more, and right-click a project to rename or delete. Daily backups go under <code>projects\&lt;slug&gt;\backups\YYYY-MM-DD</code>.</li>
+          <li><strong>PDF and Markdown.</strong> The tree and search include <code>.pdf</code>, <code>.md</code>, and <code>.markdown</code> alongside HTML. Markdown is rendered in the viewer; PDFs open as extracted text.</li>
+          <li><strong>Copy folder path.</strong> Right-click a folder in <em>Folders in this project</em> for full and relative path copy.</li>
+          <li><strong>WebView2.</strong> <code>start-webview.vbs</code> / <code>uv run lhr serve --webview</code> opens a frameless Edge window. Toolbar ─ □ ✕, drag, edge resize. Maximize fills the work area (taskbar stays visible); <kbd>F11</kbd> is fullscreen; <kbd>F5</kbd> reloads.</li>
+          <li><strong>Hidden console.</strong> <code>start.vbs</code> and <code>start-webview.vbs</code> start already minimized (no console flash). Restore <em>Local HTML Reader</em> from the taskbar for logs.</li>
+          <li>Settings writes retry on OneDrive <em>Access denied</em>. Deleting a project removes <code>project.json</code> first so the name disappears even if backup files are locked.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Search on Enter or blur; narrower find boxes</h2>
           <span class="chip">3eb495c</span>
           <span class="date">2026-09-11</span>

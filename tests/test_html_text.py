@@ -36,6 +36,21 @@ def test_skips_inert_hidden_nodes() -> None:
         assert token not in text
 
 
+def test_unclosed_head_does_not_swallow_body() -> None:
+    raw = """
+    <html>
+      <head>
+        <title>TITLETOKEN</title>
+        <meta charset="utf-8">
+      <div>BODYTOKEN github cache</div>
+    </html>
+    """
+    text = html_visible_text(raw)
+    assert "BODYTOKEN" in text
+    assert "github" in text
+    assert "TITLETOKEN" not in text
+
+
 def test_includes_css_collapsed_sections(tmp_path: Path) -> None:
     css = tmp_path / "docs.css"
     css.write_text(".height-container { display: none; }", encoding="utf-8")

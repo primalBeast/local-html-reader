@@ -2,6 +2,21 @@ export type Root = {
   id: string;
   path: string;
   exists: boolean;
+  enabled?: boolean;
+};
+
+export type ProjectFolder = {
+  id: string;
+  path: string;
+  enabled: boolean;
+  exists: boolean;
+};
+
+export type Project = {
+  slug: string;
+  name: string;
+  folders: ProjectFolder[];
+  last_document: { root_id: string; rel: string } | null;
 };
 
 export type DocumentHit = {
@@ -28,6 +43,8 @@ export type Settings = {
   schema_version: number;
   roots: Array<{ id: string; path: string }>;
   last_document: { root_id: string; rel: string } | null;
+  last_project_slug: string | null;
+  projects_epoch: number;
   sidebar_width: number;
   search_history: string[];
   page_search_history: string[];
@@ -85,11 +102,46 @@ export const api = {
     };
     return () => source.close();
   },
+  projects: () => request<{ current_slug: string | null; projects: Project[] }>('/api/projects'),
+  createProject: (name: string) =>
+    request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ name }) }),
+  selectProject: (slug: string) =>
+    request<Project>(`/api/projects/${encodeURIComponent(slug)}/select`, { method: 'POST' }),
+  renameProject: (slug: string, name: string) =>
+    request<Project>(`/api/projects/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteProject: (slug: string) =>
+    request<{ ok: boolean; current_slug: string | null }>(
+      `/api/projects/${encodeURIComponent(slug)}`,
+      { method: 'DELETE' },
+    ),
+  addProjectFolder: (slug: string, path: string) =>
+    request<ProjectFolder>(`/api/projects/${encodeURIComponent(slug)}/folders`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  setFolderEnabled: (slug: string, folderId: string, enabled: boolean) =>
+    request<ProjectFolder>(
+      `/api/projects/${encodeURIComponent(slug)}/folders/${encodeURIComponent(folderId)}`,
+      { method: 'PATCH', body: JSON.stringify({ enabled }) },
+    ),
+  removeProjectFolder: (slug: string, folderId: string) =>
+    request<{ ok: boolean; id: string }>(
+      `/api/projects/${encodeURIComponent(slug)}/folders/${encodeURIComponent(folderId)}`,
+      { method: 'DELETE' },
+    ),
   roots: () => request<{ roots: Root[] }>('/api/roots'),
   addRoot: (path: string) =>
     request<Root>('/api/roots', { method: 'POST', body: JSON.stringify({ path }) }),
   setRoot: (path: string) =>
     request<Root>('/api/roots', { method: 'PUT', body: JSON.stringify({ path }) }),
+  setRootEnabled: (id: string, enabled: boolean) =>
+    request<Root>(`/api/roots/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
   removeRoot: (id: string) =>
     request<{ ok: boolean; id: string }>(`/api/roots/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -112,7 +164,73 @@ export const api = {
       `/api/tree${qs ? `?${qs}` : ''}`,
     );
   },
+  async treeStream(
+    q: string | undefined,
+    onProgress: (fileCount: number) => void,
+    signal?: AbortSignal,
+  ): Promise<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }> {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    const qs = params.toString();
+    const url = `/api/tree/stream${qs ? `?${qs}` : ''}`;
+    try {
+      return await readTreeSse(url, onProgress, signal);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      return request<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }>(
+        `/api/tree${qs ? `?${qs}` : ''}`,
+        { signal },
+      );
+    }
+  },
 };
+
+type TreeStreamResult = {
+  tree: TreeNode[];
+  file_count: number;
+  truncated: boolean;
+  query: string;
+};
+
+async function readTreeSse(
+  url: string,
+  onProgress: (fileCount: number) => void,
+  signal?: AbortSignal,
+): Promise<TreeStreamResult> {
+  const res = await fetch(url, { signal, headers: { Accept: 'text/event-stream' } });
+  if (!res.ok || !res.body) throw new Error(`tree stream failed (${res.status})`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let doneResult: TreeStreamResult | null = null;
+  const consume = (block: string) => {
+    let eventName = 'message';
+    const dataLines: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^\s/, ''));
+    }
+    if (!dataLines.length) return;
+    const data = JSON.parse(dataLines.join('\n')) as TreeStreamResult & {
+      file_count?: number;
+      detail?: string;
+    };
+    if (eventName === 'progress') onProgress(Number(data.file_count) || 0);
+    else if (eventName === 'done') doneResult = data as TreeStreamResult;
+    else if (eventName === 'fail') throw new Error(data.detail || 'tree stream failed');
+  };
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buf += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, '\n');
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const block of parts) consume(block);
+  }
+  if (buf.trim()) consume(buf);
+  if (!doneResult) throw new Error('tree stream ended without results');
+  return doneResult;
+}
 
 export function viewUrl(rootId: string, rel: string): string {
   const parts = rel
