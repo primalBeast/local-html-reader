@@ -5,6 +5,7 @@
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
   import { api, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type Settings, type TreeNode } from './lib/api';
+  import PdfViewer from './lib/PdfViewer.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
 
   let roots = $state<Root[]>([]);
@@ -36,6 +37,7 @@
   let settingFolder = $state(false);
 
   let iframeEl = $state<HTMLIFrameElement | null>(null);
+  let pdfRootEl = $state<HTMLElement | null>(null);
   let listQuery = $state('');
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
@@ -418,6 +420,7 @@
 
   async function openDoc(doc: DocumentHit) {
     selected = doc;
+    pdfRootEl = null;
     pageQuery = '';
     pageMarks = [];
     pageIndex = 0;
@@ -536,11 +539,23 @@
     }
   }
 
+  function isPdfHit(doc: DocumentHit | null): boolean {
+    return Boolean(doc?.rel?.toLowerCase().endsWith('.pdf'));
+  }
+
+  function findRoot(): Document | HTMLElement | null {
+    if (isPdfHit(selected)) {
+      if (pdfRootEl?.isConnected) return pdfRootEl;
+      return null;
+    }
+    return iframeDoc();
+  }
+
   let docFindTimer: ReturnType<typeof setTimeout> | undefined;
   let docFindGen = 0;
 
   async function runAllFinds(focusList = false, gen = docFindGen) {
-    const doc = iframeDoc();
+    const doc = findRoot();
     if (!doc) {
       listMarks = [];
       pageMarks = [];
@@ -653,12 +668,12 @@
     pageIndex = reveal(pageMarks, pageIndex - 1, 'page');
   }
 
-  function isPdfHit(doc: DocumentHit | null): boolean {
-    return Boolean(doc?.rel?.toLowerCase().endsWith('.pdf'));
+  function onIframeLoad() {
+    scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
-  function onIframeLoad() {
-    if (isPdfHit(selected)) return;
+  function onPdfReady(root: HTMLElement) {
+    pdfRootEl = root;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
@@ -666,14 +681,12 @@
     const target = event.target as HTMLElement | null;
     const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && selected) {
-      if (isPdfHit(selected)) return;
       event.preventDefault();
       pageFindInput?.focus();
       pageFindInput?.select();
       return;
     }
     if (event.key === 'F3' && selected) {
-      if (isPdfHit(selected)) return;
       event.preventDefault();
       if (event.shiftKey) pageFindPrev();
       else pageFindNext();
@@ -1071,15 +1084,10 @@
             </form>
           </div>
         </div>
-        {#key `${selected.root_id}:${selected.rel}`}
-          {#if isPdfHit(selected)}
-            <embed
-              class="doc-frame"
-              type="application/pdf"
-              title={selected.name}
-              src={viewUrl(selected.root_id, selected.rel)}
-            />
-          {:else}
+        {#if isPdfHit(selected)}
+          <PdfViewer src={viewUrl(selected.root_id, selected.rel)} onReady={onPdfReady} />
+        {:else}
+          {#key `${selected.root_id}:${selected.rel}`}
             <iframe
               class="doc-frame"
               bind:this={iframeEl}
@@ -1088,8 +1096,8 @@
               sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
               onload={onIframeLoad}
             ></iframe>
-          {/if}
-        {/key}
+          {/key}
+        {/if}
       {:else}
         <div class="empty viewer-empty">
           Click a document in the left pane to open it here.

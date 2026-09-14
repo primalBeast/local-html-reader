@@ -26,6 +26,9 @@ export default defineConfig({
           if (id.includes('node_modules/svelte') || id.includes('node_modules/@sveltejs')) {
             return 'svelte';
           }
+          if (id.includes('pdfjs-dist')) {
+            return 'pdfjs';
+          }
           if (id.includes('node_modules')) {
             return 'vendor';
           }

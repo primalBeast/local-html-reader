@@ -50,13 +50,14 @@ def _apply_security_headers(headers: MutableHeaders, path: str) -> None:
     headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self'; "
+        "script-src 'self' 'wasm-unsafe-eval'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "font-src 'self' data:; "
         "connect-src 'self'; "
         "frame-src 'self'; "
         "object-src 'self'; "
+        "worker-src 'self' blob:; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'",

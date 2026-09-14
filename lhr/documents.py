@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from lhr.extract import DOC_SUFFIXES, extract_search_text
+from lhr.extract import DOC_SUFFIXES, extract_search_text, text_matches_query
 from lhr.paths import PathEscapeError, is_within, normalize_rel, resolve_under_root
 from lhr.projects import (
     add_folder as project_add_folder,
@@ -106,7 +106,7 @@ def _rel_posix(root: Path, file_path: Path) -> str:
 
 def _content_contains(path: Path, needle: str, root: Path | None = None) -> bool:
     """True if searchable document text contains needle (case-insensitive)."""
-    return needle in extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES).lower()
+    return text_matches_query(extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES), needle)
 
 
 def _file_matches_query(path: Path, name: str, rel: str, needle: str, root: Path | None = None) -> bool:

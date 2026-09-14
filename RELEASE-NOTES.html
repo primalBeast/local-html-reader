@@ -113,14 +113,28 @@
 
       <article>
         <div class="row">
+          <h2>PDF viewer, search, and layout</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-09-14</span>
+        </div>
+        <ul>
+          <li><strong>PDF.js viewer.</strong> The right pane renders PDFs with a text layer so <em>From list search</em> and <em>Find in page</em> work. Highlights are translucent overlays on the glyphs. The worker is served as JavaScript (Windows was sending <code>.mjs</code> as <code>text/plain</code> and Edge blocked it).</li>
+          <li><strong>Encrypted PDFs.</strong> Left-pane search decrypts empty-password AES files (needs <code>cryptography</code>). That is why TD confirmations such as <code>044147J</code> were missing before.</li>
+          <li><strong>Fit and resize.</strong> Pages follow the right-pane width. Live resize scales in place (no black flash); after you pause, it re-renders. Shrinking keeps the page centered. Switching PDFs keeps the old page until the new one is ready.</li>
+          <li><strong>Scrollbars.</strong> WebView2 resize handles no longer steal the layout row, so the tree and PDF scroll inside the window instead of drawing below it.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>PDFs open in the right pane</h2>
           <span class="chip">ff21d92</span>
           <span class="date">2026-09-14</span>
         </div>
         <ul>
           <li>PDFs were loading in a sandboxed iframe, so Edge showed <em>This page has been blocked by Microsoft Edge</em>.</li>
-          <li>The right pane now embeds the PDF with Edge’s built-in viewer. HTML pages stay sandboxed.</li>
-          <li>In-page find still applies to HTML and Markdown. For PDFs, use the PDF viewer’s own <kbd>Ctrl+F</kbd>.</li>
+          <li>The right pane now shows PDFs instead of Edge blocking a sandboxed iframe. HTML pages stay sandboxed.</li>
+          <li>In-page find applies to HTML and Markdown. PDF find landed in the following release.</li>
         </ul>
       </article>
 

@@ -5,6 +5,7 @@ description = "Local-first web app for reading HTML documents on disk"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=50.0.1",
     "fastapi>=0.115.0",
     "markdown>=3.7",
     "pydantic>=2.9.0",

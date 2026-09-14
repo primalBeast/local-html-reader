@@ -2,14 +2,31 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from lhr.html_text import html_visible_text
+
+logger = logging.getLogger("lhr.extract")
 
 HTML_SUFFIXES = {".html", ".htm"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 PDF_SUFFIXES = {".pdf"}
 DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES
+
+
+def text_matches_query(text: str, needle: str) -> bool:
+    """Case-insensitive match; also ignores whitespace so spaced PDF glyphs hit."""
+    q = (needle or "").strip().lower()
+    if not q:
+        return True
+    hay = text.lower()
+    if q in hay:
+        return True
+    compact_q = "".join(q.split())
+    if not compact_q:
+        return False
+    return compact_q in "".join(hay.split())
 
 
 def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int = 8 * 1024 * 1024) -> str:
@@ -51,6 +68,7 @@ def _pdf_text(path: Path, *, max_bytes: int) -> str:
         return ""
     try:
         from pypdf import PdfReader
+        from pypdf.errors import DependencyError
     except ImportError:
         return ""
     try:
@@ -58,14 +76,22 @@ def _pdf_text(path: Path, *, max_bytes: int) -> str:
         if getattr(reader, "is_encrypted", False):
             try:
                 reader.decrypt("")
+            except DependencyError:
+                logger.warning("PDF %s is encrypted; cryptography is required to search it", path)
+                return ""
             except Exception:
+                logger.debug("Could not decrypt PDF %s", path, exc_info=True)
                 return ""
         parts: list[str] = []
         for page in reader.pages[:200]:
             try:
                 parts.append(page.extract_text() or "")
+            except DependencyError:
+                logger.warning("PDF %s needs cryptography to extract text", path)
+                return ""
             except Exception:
                 continue
         return "\n".join(parts)
     except Exception:
+        logger.debug("PDF extract failed for %s", path, exc_info=True)
         return ""

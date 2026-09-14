@@ -53,6 +53,26 @@ def test_side_by_side_page(client: TestClient):
     assert spa.headers.get("x-frame-options") == "SAMEORIGIN"
 
 
+def test_mjs_assets_are_javascript(client: TestClient):
+    import mimetypes
+
+    from lhr.app import frontend_dist
+
+    assert mimetypes.guess_type("pdf.worker.min.mjs")[0] == "text/javascript"
+    assets = frontend_dist() / "assets"
+    workers = sorted(assets.glob("pdf.worker*")) + sorted(assets.glob("*.mjs"))
+    assert workers, "expected a pdf.js worker file in frontend/dist/assets"
+    seen = set()
+    for path in workers:
+        if path.name in seen:
+            continue
+        seen.add(path.name)
+        r = client.get(f"/assets/{path.name}")
+        assert r.status_code == 200, path.name
+        ct = r.headers.get("content-type", "")
+        assert "javascript" in ct or "ecmascript" in ct, (path.name, ct)
+
+
 def test_health(client: TestClient):
     r = client.get("/health")
     assert r.status_code == 200
@@ -121,6 +141,15 @@ def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: P
     assert missing.status_code == 400
     relative = client.post("/api/roots", json={"path": "relative\\folder"})
     assert relative.status_code == 400
+
+
+def test_search_finds_aes_encrypted_pdf(client: TestClient, docs_tree: dict[str, Path]):
+    from tests.test_extract import _pdf_with_token
+
+    (docs_tree["root"] / "locked.pdf").write_bytes(_pdf_with_token(encrypt=True))
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    hits = client.get("/api/documents", params={"q": "PDFUNIQUETOKEN"}).json()["documents"]
+    assert {d["rel"] for d in hits} == {"locked.pdf"}
 
 
 def test_lists_and_searches_markdown_and_pdf(client: TestClient, docs_tree: dict[str, Path]):

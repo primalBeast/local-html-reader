@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -18,6 +19,10 @@ from lhr.middleware import SecurityHeadersMiddleware, install_cors
 from lhr.sync import clear_subscribers, run_poller, set_loop
 
 logger = logging.getLogger("lhr.app")
+
+# Windows maps .mjs to text/plain; nosniff then blocks pdf.js module workers.
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("text/javascript", ".cjs")
 
 
 def repo_root() -> Path:
