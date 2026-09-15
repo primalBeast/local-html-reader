@@ -47,6 +47,16 @@
     return out;
   }
 
+  function selectFileAt(index: number, block: ScrollLogicalPosition = 'nearest') {
+    const files = visibleFiles(nodes);
+    if (!files.length) return;
+    const next = Math.max(0, Math.min(files.length - 1, index));
+    onOpen(nodeToHit(files[next]));
+    requestAnimationFrame(() => {
+      treeEl?.querySelector('.tree-row.file.active')?.scrollIntoView({ block });
+    });
+  }
+
   function moveSelection(delta: number) {
     const files = visibleFiles(nodes);
     if (!files.length) return;
@@ -54,10 +64,50 @@
     if (index < 0) index = delta > 0 ? -1 : files.length;
     const next = index + delta;
     if (next < 0 || next >= files.length) return;
-    onOpen(nodeToHit(files[next]));
-    requestAnimationFrame(() => {
-      treeEl?.querySelector('.tree-row.file.active')?.scrollIntoView({ block: 'nearest' });
-    });
+    selectFileAt(next);
+  }
+
+  function scrollParent(): HTMLElement | null {
+    return treeEl?.parentElement ?? null;
+  }
+
+  function visibleFileIndexes(): number[] {
+    const scroller = scrollParent();
+    const buttons = treeEl ? Array.from(treeEl.querySelectorAll<HTMLElement>('.tree-row.file')) : [];
+    if (!scroller || !buttons.length) return [];
+    const viewTop = scroller.scrollTop;
+    const viewBottom = viewTop + scroller.clientHeight;
+    const origin = scroller.getBoundingClientRect().top;
+    const hits: number[] = [];
+    for (let i = 0; i < buttons.length; i++) {
+      const rect = buttons[i].getBoundingClientRect();
+      const top = rect.top - origin + scroller.scrollTop;
+      const bottom = top + rect.height;
+      if (bottom > viewTop + 1 && top < viewBottom - 1) hits.push(i);
+    }
+    return hits;
+  }
+
+  function pageToEdge(edge: 'first' | 'last') {
+    const files = visibleFiles(nodes);
+    if (!files.length) return;
+    const visible = visibleFileIndexes();
+    const current = files.findIndex((node) => isSelected(node));
+    const scroller = scrollParent();
+    let target = edge === 'first' ? visible[0] : visible[visible.length - 1];
+    const already = target === current;
+    if (already && scroller) {
+      const page = Math.max(24, scroller.clientHeight - 32);
+      scroller.scrollTop += edge === 'last' ? page : -page;
+      requestAnimationFrame(() => {
+        const after = visibleFileIndexes();
+        const idx = edge === 'first' ? after[0] : after[after.length - 1];
+        selectFileAt(idx ?? (edge === 'first' ? 0 : files.length - 1), 'nearest');
+      });
+      return;
+    }
+    if (target == null) target = edge === 'first' ? 0 : files.length - 1;
+    selectFileAt(target, 'nearest');
   }
 
   function onTreeKeydown(event: KeyboardEvent) {
@@ -67,6 +117,21 @@
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       moveSelection(-1);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      const scroller = scrollParent();
+      if (scroller) scroller.scrollTop = 0;
+      const files = visibleFiles(nodes);
+      if (files.length) onOpen(nodeToHit(files[0]));
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      selectFileAt(visibleFiles(nodes).length - 1, 'end');
+    } else if (event.key === 'PageDown') {
+      event.preventDefault();
+      pageToEdge('last');
+    } else if (event.key === 'PageUp') {
+      event.preventDefault();
+      pageToEdge('first');
     }
   }
 

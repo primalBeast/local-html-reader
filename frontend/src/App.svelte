@@ -38,6 +38,7 @@
 
   let iframeEl = $state<HTMLIFrameElement | null>(null);
   let pdfRootEl = $state<HTMLElement | null>(null);
+  let heldHtml = $state<DocumentHit | null>(null);
   let listQuery = $state('');
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
@@ -419,6 +420,9 @@
   }
 
   async function openDoc(doc: DocumentHit) {
+    const fromHtml = selected && !isPdfHit(selected);
+    if (isPdfHit(doc) && fromHtml) heldHtml = selected;
+    else if (!isPdfHit(doc)) heldHtml = null;
     selected = doc;
     pdfRootEl = null;
     pageQuery = '';
@@ -674,6 +678,7 @@
 
   function onPdfReady(root: HTMLElement) {
     pdfRootEl = root;
+    heldHtml = null;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
@@ -1084,20 +1089,28 @@
             </form>
           </div>
         </div>
-        {#if isPdfHit(selected)}
-          <PdfViewer src={viewUrl(selected.root_id, selected.rel)} onReady={onPdfReady} />
-        {:else}
-          {#key `${selected.root_id}:${selected.rel}`}
-            <iframe
-              class="doc-frame"
-              bind:this={iframeEl}
-              title={selected.name}
+        <div class="viewer-stage">
+          {#if selected && (!isPdfHit(selected) || heldHtml)}
+            {#key `${(heldHtml ?? selected).root_id}:${(heldHtml ?? selected).rel}`}
+              <iframe
+                class="doc-frame"
+                class:viewer-under={Boolean(heldHtml)}
+                bind:this={iframeEl}
+                title={(heldHtml ?? selected).name}
+                src={viewUrl((heldHtml ?? selected).root_id, (heldHtml ?? selected).rel)}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                onload={onIframeLoad}
+              ></iframe>
+            {/key}
+          {/if}
+          {#if isPdfHit(selected)}
+            <PdfViewer
               src={viewUrl(selected.root_id, selected.rel)}
-              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-              onload={onIframeLoad}
-            ></iframe>
-          {/key}
-        {/if}
+              overlay={Boolean(heldHtml)}
+              onReady={onPdfReady}
+            />
+          {/if}
+        </div>
       {:else}
         <div class="empty viewer-empty">
           Click a document in the left pane to open it here.

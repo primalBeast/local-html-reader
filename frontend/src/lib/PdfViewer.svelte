@@ -3,9 +3,11 @@
 
   let {
     src,
+    overlay = false,
     onReady,
   }: {
     src: string;
+    overlay?: boolean;
     onReady?: (root: HTMLElement) => void;
   } = $props();
 
@@ -29,12 +31,38 @@
     let loadGen = 0;
     let lastWidth = 0;
     let paintedHeight = 0;
+    let paintedScale = 0;
+    let desiredScale = 1;
+    let pageWidthPt = 1;
+    let pageHeightPt = 1;
+    let userHasZoomed = false;
+    let zoomReady = false;
+    let liveFit = 1;
     let resizeTimer = 0;
 
     function gutterWidth(): number {
       const el = slot || frame;
       if (!el) return 0;
       return Math.max(160, Math.floor(el.clientWidth));
+    }
+
+    function viewportHeight(): number {
+      if (!frame) return 0;
+      return Math.max(80, Math.floor(frame.clientHeight));
+    }
+
+    function fitHeightScale(): number {
+      if (pageHeightPt < 1) return 1;
+      const hostPad = host
+        ? (parseFloat(getComputedStyle(host).paddingTop) || 0) +
+          (parseFloat(getComputedStyle(host).paddingBottom) || 0)
+        : 48;
+      const avail = Math.max(80, viewportHeight() - hostPad - 8);
+      return avail / pageHeightPt;
+    }
+
+    function clampScale(value: number): number {
+      return Math.min(8, Math.max(0.15, value));
     }
 
     function cancelPageTasks() {
@@ -50,31 +78,52 @@
     }
 
     function resetLiveScale() {
+      liveFit = 1;
       if (host) {
         host.style.transform = '';
         host.style.width = '';
         host.style.marginLeft = '';
       }
-      if (slot) slot.style.height = '';
+      if (slot) {
+        slot.style.height = '';
+        slot.style.width = '';
+      }
     }
 
-    function applyLiveScale(targetWidth: number) {
-      if (!host || !slot || lastWidth < 80 || !host.childElementCount) return;
-      const fit = targetWidth / lastWidth;
-      if (!Number.isFinite(fit) || fit <= 0) return;
-      if (Math.abs(fit - 1) < 0.002) {
+    function scrollKeepCentered(prevVisualW: number, prevVisualH: number, nextVisualW: number, nextVisualH: number) {
+      if (!frame) return;
+      const viewW = frame.clientWidth;
+      const viewH = frame.clientHeight;
+      const cx = prevVisualW <= viewW ? 0.5 : (frame.scrollLeft + viewW / 2) / Math.max(1, prevVisualW);
+      const cy = prevVisualH < 1 ? 0 : (frame.scrollTop + viewH / 2) / Math.max(1, prevVisualH);
+      if (nextVisualW <= viewW) frame.scrollLeft = 0;
+      else frame.scrollLeft = cx * nextVisualW - viewW / 2;
+      frame.scrollTop = cy * nextVisualH - viewH / 2;
+    }
+
+    function applyLiveZoom() {
+      if (!host || !slot || !frame || lastWidth < 80 || paintedScale < 0.05 || !host.childElementCount) return;
+      const nextFit = desiredScale / paintedScale;
+      if (!Number.isFinite(nextFit) || nextFit <= 0) return;
+      const prevFit = liveFit;
+      const viewW = frame.clientWidth;
+      const prevVW = Math.max(lastWidth * prevFit, 1);
+      const prevVH = Math.max(paintedHeight * prevFit, 1);
+      const nextVW = lastWidth * nextFit;
+      const nextVH = paintedHeight * nextFit;
+      if (Math.abs(nextFit - 1) < 0.002) {
         resetLiveScale();
+        scrollKeepCentered(prevVW, prevVH, lastWidth, paintedHeight);
         return;
       }
-      // Keep the unscaled page centered in the pane, then scale from its
-      // center. Without the negative margin, a too-wide page left-aligns
-      // and shrinking slides the left edge right.
       host.style.width = `${lastWidth}px`;
-      host.style.marginLeft = `${(targetWidth - lastWidth) / 2}px`;
+      host.style.marginLeft = '0';
       host.style.transformOrigin = 'top center';
-      host.style.transform = `scale(${fit})`;
-      const base = paintedHeight || host.scrollHeight;
-      slot.style.height = `${base * fit}px`;
+      host.style.transform = `scale(${nextFit})`;
+      slot.style.width = `${Math.max(viewW, nextVW)}px`;
+      slot.style.height = `${nextVH}px`;
+      liveFit = nextFit;
+      scrollKeepCentered(prevVW, prevVH, Math.max(viewW, nextVW), nextVH);
     }
 
     async function paintPages() {
@@ -82,9 +131,9 @@
       const pdf = pdfDoc;
       const root = host;
       if (!pdfjs || !pdf || !root) return;
-      const cssWidth = gutterWidth();
-      if (cssWidth < 80) return;
-      if (Math.abs(cssWidth - lastWidth) < 2 && root.childElementCount) {
+      const scale = desiredScale;
+      if (scale < 0.05) return;
+      if (Math.abs(scale - paintedScale) < 0.002 && root.childElementCount) {
         resetLiveScale();
         return;
       }
@@ -98,8 +147,6 @@
         for (let n = 1; n <= maxPages; n++) {
           if (cancelled || gen !== paintGen) return;
           const page = await pdf.getPage(n);
-          const unscaled = page.getViewport({ scale: 1 });
-          const scale = cssWidth / unscaled.width;
           const viewport = page.getViewport({ scale });
           const wrap = document.createElement('div');
           wrap.className = 'pdf-page';
@@ -134,11 +181,28 @@
         }
         if (cancelled || gen !== paintGen) return;
         root.replaceChildren(frag);
-        lastWidth = cssWidth;
         resetLiveScale();
+        const firstPage = root.querySelector('.pdf-page') as HTMLElement | null;
+        lastWidth = firstPage ? firstPage.offsetWidth : Math.round(pageWidthPt * scale);
+        paintedScale = scale;
         paintedHeight = root.scrollHeight;
+        if (firstPage && lastWidth > gutterWidth() && slot) {
+          slot.style.width = `${lastWidth}px`;
+          root.style.width = `${lastWidth}px`;
+        }
         loading = false;
-        onReady?.(root);
+        requestAnimationFrame(() => {
+          if (cancelled || gen !== paintGen || !frame) return;
+          if (lastWidth > frame.clientWidth) {
+            frame.scrollLeft = (lastWidth - frame.clientWidth) / 2;
+          } else {
+            frame.scrollLeft = 0;
+          }
+          requestAnimationFrame(() => {
+            if (cancelled || gen !== paintGen) return;
+            onReady?.(root);
+          });
+        });
       } catch (e) {
         if (cancelled || gen !== paintGen) return;
         if (first) {
@@ -201,7 +265,16 @@
         }
         const previous = pdfDoc;
         pdfDoc = pdf;
+        const firstPage = await pdf.getPage(1);
+        const unscaled = firstPage.getViewport({ scale: 1 });
+        pageWidthPt = unscaled.width;
+        pageHeightPt = unscaled.height;
+        if (!zoomReady) {
+          desiredScale = clampScale(fitHeightScale());
+          zoomReady = true;
+        }
         lastWidth = 0;
+        paintedScale = 0;
         await paintPages();
         if (cancelled || gen !== loadGen) return;
         loading = false;
@@ -220,13 +293,28 @@
       }
     };
 
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey || !pdfDoc) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+      userHasZoomed = true;
+      desiredScale = clampScale(desiredScale * factor);
+      applyLiveZoom();
+      schedulePaint();
+    }
+
     const ro = new ResizeObserver(() => {
       if (!pdfDoc) return;
-      applyLiveScale(gutterWidth());
+      if (!userHasZoomed) desiredScale = clampScale(fitHeightScale());
+      applyLiveZoom();
       schedulePaint();
     });
     const attachObserver = () => {
-      if (frame) ro.observe(frame);
+      if (frame) {
+        ro.observe(frame);
+        frame.addEventListener('wheel', onWheel, { passive: false });
+      }
     };
     attachObserver();
     requestAnimationFrame(attachObserver);
@@ -236,6 +324,7 @@
       cancelled = true;
       window.clearTimeout(resizeTimer);
       ro.disconnect();
+      frame?.removeEventListener('wheel', onWheel);
       cancelPageTasks();
       for (const task of lifetime) {
         try {
@@ -255,7 +344,7 @@
   });
 </script>
 
-<div class="pdf-frame doc-frame" bind:this={frame}>
+<div class="pdf-frame doc-frame" class:pdf-frame-overlay={overlay} bind:this={frame}>
   <div class="pdf-fit" bind:this={slot}>
     <div class="pdf-pages" bind:this={host}></div>
   </div>
