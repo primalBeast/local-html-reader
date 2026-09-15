@@ -364,6 +364,30 @@ def test_projects_isolate_folders(client: TestClient, tmp_path: Path, docs_tree:
     assert "bravo.html" not in rels_a
 
 
+def test_project_query_does_not_need_global_select(client: TestClient, tmp_path: Path, docs_tree: dict[str, Path]):
+    other = tmp_path / "product-c"
+    other.mkdir()
+    (other / "charlie.html").write_text("<html>charlie</html>", encoding="utf-8")
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    slug_c = client.post("/api/projects", json={"name": "Product C"}).json()["slug"]
+    client.post(f"/api/projects/{slug_c}/folders", json={"path": str(other)})
+    client.post("/api/projects/default/select")
+    rels_c = {d["rel"] for d in client.get("/api/documents", params={"project": slug_c}).json()["documents"]}
+    rels_default = {d["rel"] for d in client.get("/api/documents", params={"project": "default"}).json()["documents"]}
+    assert rels_c == {"charlie.html"}
+    assert "index.html" in rels_default
+    assert "charlie.html" not in rels_default
+    def names_in_tree(nodes: list) -> set[str]:
+        out: set[str] = set()
+        for n in nodes:
+            out.add(n["name"])
+            out |= names_in_tree(n.get("children") or [])
+        return out
+
+    tree_c = client.get("/api/tree", params={"project": slug_c}).json()["tree"]
+    assert "charlie.html" in names_in_tree(tree_c)
+
+
 def test_delete_project_unregisters_even_with_locked_leftovers(
     client: TestClient, tmp_path: Path
 ):

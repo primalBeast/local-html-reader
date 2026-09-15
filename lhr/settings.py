@@ -113,7 +113,7 @@ def save_settings(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def patch_settings(updates: dict[str, Any]) -> dict[str, Any]:
+def patch_settings(updates: dict[str, Any], *, project: str | None = None) -> dict[str, Any]:
     with settings_write_lock():
         data = load_settings()
         for k, v in updates.items():
@@ -123,7 +123,7 @@ def patch_settings(updates: dict[str, Any]) -> dict[str, Any]:
                 data["roots"] = v
             elif k == "last_document":
                 data["last_document"] = v
-                slug = data.get("last_project_slug")
+                slug = project or data.get("last_project_slug")
                 if isinstance(slug, str) and slug:
                     try:
                         from lhr.projects import write_last_document

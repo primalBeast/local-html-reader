@@ -51,8 +51,24 @@ export type Settings = {
   window: { last_host: string; last_port: number };
 };
 
+let activeProject: string | null = null;
+
+export function setApiProject(slug: string | null): void {
+  activeProject = slug && slug.trim() ? slug.trim() : null;
+}
+
+export function getApiProject(): string | null {
+  return activeProject;
+}
+
+function withProject(path: string): string {
+  if (!activeProject) return path;
+  const join = path.includes('?') ? '&' : '?';
+  return `${path}${join}project=${encodeURIComponent(activeProject)}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(withProject(path), {
     ...init,
     headers: {
       Accept: 'application/json',
@@ -172,7 +188,7 @@ export const api = {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     const qs = params.toString();
-    const url = `/api/tree/stream${qs ? `?${qs}` : ''}`;
+    const url = withProject(`/api/tree/stream${qs ? `?${qs}` : ''}`);
     try {
       return await readTreeSse(url, onProgress, signal);
     } catch (err) {
@@ -239,7 +255,7 @@ export function viewUrl(rootId: string, rel: string): string {
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/');
-  return `/view/${encodeURIComponent(rootId)}/${parts}`;
+  return withProject(`/view/${encodeURIComponent(rootId)}/${parts}`);
 }
 
 export function windowsRelPath(rel: string): string {

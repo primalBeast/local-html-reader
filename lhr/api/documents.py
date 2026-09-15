@@ -17,34 +17,41 @@ router = APIRouter(tags=["documents"])
 def list_documents(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
+    project: str | None = Query(default=None),
 ) -> dict:
     try:
-        return documents.list_documents(query=q, root_id=root_id)
-    except KeyError as exc:
+        return documents.list_documents(query=q, root_id=root_id, project=project)
+    except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/tree")
 def document_tree(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
+    project: str | None = Query(default=None),
 ) -> dict:
     try:
-        return documents.document_tree(query=q, root_id=root_id)
-    except KeyError as exc:
+        return documents.document_tree(query=q, root_id=root_id, project=project)
+    except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/tree/stream")
 def document_tree_stream(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
+    project: str | None = Query(default=None),
 ):
     def events():
         hits: list = []
         try:
             yield f"event: progress\ndata: {json.dumps({'file_count': 0, 'truncated': False})}\n\n"
-            for hit in documents.iter_matching_html(query=q, root_id=root_id):
+            for hit in documents.iter_matching_html(query=q, root_id=root_id, project=project):
                 hits.append(hit)
                 yield (
                     "event: progress\n"
@@ -58,7 +65,7 @@ def document_tree_stream(
                 "query": (q or "").strip(),
             }
             yield f"event: done\ndata: {json.dumps(payload)}\n\n"
-        except KeyError as exc:
+        except (KeyError, FileNotFoundError, ValueError) as exc:
             yield f"event: fail\ndata: {json.dumps({'detail': str(exc)})}\n\n"
 
     return StreamingResponse(
@@ -73,11 +80,11 @@ def document_tree_stream(
 
 
 @router.get("/view/{root_id}/{rel_path:path}")
-def view_file(root_id: str, rel_path: str):
+def view_file(root_id: str, rel_path: str, project: str | None = Query(default=None)):
     rel = unquote(rel_path or "")
     try:
-        path = documents.resolve_document(root_id, rel)
-    except KeyError as exc:
+        path = documents.resolve_document(root_id, rel, project=project)
+    except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PathEscapeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

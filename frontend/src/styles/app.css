@@ -48,10 +48,7 @@ input {
   overflow: hidden;
 }
 
-html[data-webview='1'] .topbar { cursor: grab; }
-html[data-webview='1'] .topbar button,
-html[data-webview='1'] .topbar select,
-html[data-webview='1'] .topbar input { cursor: pointer; }
+html[data-webview='1'] .topbar-spacer { cursor: grab; }
 
 .topbar {
   grid-row: 1;
@@ -74,6 +71,14 @@ html[data-webview='1'] .topbar input { cursor: pointer; }
 
 .menu {
   position: relative;
+  z-index: 20;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
 }
 
 .menu-btn {
@@ -102,7 +107,7 @@ html[data-webview='1'] .topbar input { cursor: pointer; }
   border-radius: 8px;
   box-shadow: var(--shadow);
   padding: 0.3rem;
-  z-index: 20;
+  z-index: 2;
 }
 
 .project-menu {
@@ -222,6 +227,12 @@ html[data-webview='1'] .topbar input { cursor: pointer; }
   max-width: 52vw;
 }
 
+.topbar-spacer {
+  flex: 1 1 auto;
+  min-width: 1.5rem;
+  align-self: stretch;
+}
+
 .status {
   font-size: 0.75rem;
   color: var(--text-faint);
@@ -272,12 +283,9 @@ html[data-webview='1'] .topbar input { cursor: pointer; }
   z-index: 200;
   background: transparent;
 }
-.win-resize.n { top: 0; left: 14px; right: 148px; height: 12px; cursor: ns-resize; }
 .win-resize.s { bottom: 0; left: 14px; right: 14px; height: 12px; cursor: ns-resize; }
 .win-resize.e { top: 14px; right: 0; bottom: 14px; width: 12px; cursor: ew-resize; }
 .win-resize.w { top: 14px; left: 0; bottom: 14px; width: 12px; cursor: ew-resize; }
-.win-resize.nw { top: 0; left: 0; width: 16px; height: 16px; cursor: nwse-resize; }
-.win-resize.ne { top: 0; right: 0; width: 16px; height: 16px; cursor: nesw-resize; }
 .win-resize.sw { bottom: 0; left: 0; width: 16px; height: 16px; cursor: nesw-resize; }
 .win-resize.se { bottom: 0; right: 0; width: 16px; height: 16px; cursor: nwse-resize; }
 

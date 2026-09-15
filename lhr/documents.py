@@ -11,7 +11,6 @@ from lhr.paths import PathEscapeError, is_within, normalize_rel, resolve_under_r
 from lhr.projects import (
     add_folder as project_add_folder,
     current_folders,
-    current_slug,
     remove_folder as project_remove_folder,
     set_folder_enabled,
 )
@@ -20,9 +19,9 @@ MAX_LIST = 5000
 MAX_SEARCH_BYTES = 8 * 1024 * 1024
 
 
-def _root_records(*, enabled_only: bool = True) -> list[dict[str, str]]:
+def _root_records(*, enabled_only: bool = True, project: str | None = None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for rec in current_folders(enabled_only=enabled_only):
+    for rec in current_folders(enabled_only=enabled_only, project=project):
         rid = str(rec.get("id") or "").strip()
         path = str(rec.get("path") or "").strip()
         if rid and path:
@@ -30,9 +29,9 @@ def _root_records(*, enabled_only: bool = True) -> list[dict[str, str]]:
     return out
 
 
-def list_roots() -> list[dict[str, Any]]:
+def list_roots(*, project: str | None = None) -> list[dict[str, Any]]:
     rows = []
-    for rec in current_folders(enabled_only=False):
+    for rec in current_folders(enabled_only=False, project=project):
         rows.append(
             {
                 "id": rec.get("id"),
@@ -44,29 +43,33 @@ def list_roots() -> list[dict[str, Any]]:
     return rows
 
 
-def get_root(root_id: str) -> dict[str, str]:
+def get_root(root_id: str, *, project: str | None = None) -> dict[str, str]:
     rid = (root_id or "").strip()
-    for rec in _root_records(enabled_only=False):
+    for rec in _root_records(enabled_only=False, project=project):
         if rec["id"] == rid:
             return rec
     raise KeyError(f"unknown documents root: {rid}")
 
 
-def add_root(raw_path: str) -> dict[str, Any]:
-    slug = current_slug()
+def add_root(raw_path: str, *, project: str | None = None) -> dict[str, Any]:
+    from lhr.projects import resolve_slug
+
+    slug = resolve_slug(project)
     if not slug:
         raise ValueError("create a project before adding folders")
     rec = project_add_folder(slug, raw_path)
     return rec
 
 
-def set_root(raw_path: str) -> dict[str, Any]:
+def set_root(raw_path: str, *, project: str | None = None) -> dict[str, Any]:
     """Add a folder to the current project (kept for the Add folder dialog)."""
-    return add_root(raw_path)
+    return add_root(raw_path, project=project)
 
 
-def remove_root(root_id: str) -> bool:
-    slug = current_slug()
+def remove_root(root_id: str, *, project: str | None = None) -> bool:
+    from lhr.projects import resolve_slug
+
+    slug = resolve_slug(project)
     if not slug:
         return False
     try:
@@ -76,15 +79,17 @@ def remove_root(root_id: str) -> bool:
         return False
 
 
-def set_root_enabled(root_id: str, enabled: bool) -> dict[str, Any]:
-    slug = current_slug()
+def set_root_enabled(root_id: str, enabled: bool, *, project: str | None = None) -> dict[str, Any]:
+    from lhr.projects import resolve_slug
+
+    slug = resolve_slug(project)
     if not slug:
         raise ValueError("no project selected")
     return set_folder_enabled(slug, root_id, enabled)
 
 
-def root_dir(root_id: str) -> Path:
-    rec = get_root(root_id)
+def root_dir(root_id: str, *, project: str | None = None) -> Path:
+    rec = get_root(root_id, project=project)
     p = Path(rec["path"]).expanduser()
     try:
         resolved = p.resolve()
@@ -95,8 +100,8 @@ def root_dir(root_id: str) -> Path:
     return resolved
 
 
-def resolve_document(root_id: str, rel: str) -> Path:
-    return resolve_under_root(root_dir(root_id), rel)
+def resolve_document(root_id: str, rel: str, *, project: str | None = None) -> Path:
+    return resolve_under_root(root_dir(root_id, project=project), rel)
 
 
 def _rel_posix(root: Path, file_path: Path) -> str:
@@ -119,10 +124,11 @@ def iter_matching_html(
     query: str | None = None,
     root_id: str | None = None,
     limit: int = MAX_LIST,
+    project: str | None = None,
 ):
     """Yield matching HTML file hits one at a time (for live search counts)."""
     needle = (query or "").strip().lower()
-    records = _root_records()
+    records = _root_records(project=project)
     if root_id:
         records = [r for r in records if r["id"] == root_id]
         if not records:
@@ -184,8 +190,9 @@ def list_documents(
     query: str | None = None,
     root_id: str | None = None,
     limit: int = MAX_LIST,
+    project: str | None = None,
 ) -> dict[str, Any]:
-    hits = list(iter_matching_html(query=query, root_id=root_id, limit=limit))
+    hits = list(iter_matching_html(query=query, root_id=root_id, limit=limit, project=project))
     truncated = len(hits) >= max(1, min(int(limit), MAX_LIST))
     hits.sort(key=lambda h: (h["root_path"].lower(), h["rel"].lower()))
     return {"documents": hits, "truncated": truncated}
@@ -259,8 +266,9 @@ def document_tree(
     query: str | None = None,
     root_id: str | None = None,
     limit: int = MAX_LIST,
+    project: str | None = None,
 ) -> dict[str, Any]:
-    listed = list_documents(query=query, root_id=root_id, limit=limit)
+    listed = list_documents(query=query, root_id=root_id, limit=limit, project=project)
     hits = listed["documents"]
     return {
         "tree": _tree_from_hits(hits),

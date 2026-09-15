@@ -136,6 +136,17 @@ def current_slug() -> str | None:
     return slugs[0] if slugs else None
 
 
+def resolve_slug(slug: str | None) -> str | None:
+    """Return a valid project slug. Empty uses the process default."""
+    text = (slug or "").strip()
+    if not text:
+        return current_slug()
+    validate_slug(text)
+    if text not in list_project_slugs():
+        raise FileNotFoundError(text)
+    return text
+
+
 def load_current() -> dict[str, Any] | None:
     slug = current_slug()
     if not slug:
@@ -340,9 +351,13 @@ def set_project_last_document(slug: str, last: dict[str, Any] | None) -> None:
     write_last_document(slug, last)
 
 
-def current_folders(*, enabled_only: bool = False) -> list[dict[str, Any]]:
-    proj = load_current()
-    if not proj:
+def current_folders(*, enabled_only: bool = False, project: str | None = None) -> list[dict[str, Any]]:
+    slug = resolve_slug(project)
+    if not slug:
+        return []
+    try:
+        proj = load_project(slug)
+    except FileNotFoundError:
         return []
     folders = [f for f in proj.get("folders") or [] if isinstance(f, dict)]
     if enabled_only:

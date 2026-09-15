@@ -4,7 +4,7 @@
   import SearchField from './lib/SearchField.svelte';
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
-  import { api, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type Settings, type TreeNode } from './lib/api';
+  import { api, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type Settings, type TreeNode } from './lib/api';
   import PdfViewer from './lib/PdfViewer.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
 
@@ -57,6 +57,7 @@
   const SIDEBAR_STORAGE = 'lhr.sidebar_width';
   const HISTORY_STORAGE = 'lhr.search_history';
   const PAGE_HISTORY_STORAGE = 'lhr.page_search_history';
+  const SESSION_PROJECT = 'lhr.project.slug';
   const HISTORY_MAX = 25;
 
   function readLocalWidth(): number {
@@ -76,10 +77,36 @@
   let currentProject = $derived(projects.find((p) => p.slug === currentSlug) ?? null);
   let rootLabel = $derived(currentProject?.name || 'No project');
 
+  function persistSessionProject(slug: string | null) {
+    setApiProject(slug);
+    try {
+      if (slug) sessionStorage.setItem(SESSION_PROJECT, slug);
+      else sessionStorage.removeItem(SESSION_PROJECT);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function readSessionProject(): string | null {
+    try {
+      return sessionStorage.getItem(SESSION_PROJECT);
+    } catch {
+      return null;
+    }
+  }
+
   async function loadProjects() {
     const data = await api.projects();
     projects = data.projects;
-    currentSlug = data.current_slug;
+    const slugs = new Set(projects.map((p) => p.slug));
+    if (currentSlug && slugs.has(currentSlug)) {
+      persistSessionProject(currentSlug);
+      return;
+    }
+    const stored = readSessionProject();
+    const next = stored && slugs.has(stored) ? stored : data.current_slug;
+    currentSlug = next;
+    persistSessionProject(currentSlug);
   }
 
   async function refreshRoots() {
@@ -169,8 +196,7 @@
     const incoming = (s.roots || []).map((r) => `${r.id}\t${r.path}`).join('\n');
     const current = roots.map((r) => `${r.id}\t${r.path}`).join('\n');
     const epoch = Number(s.projects_epoch || 0);
-    const slugChanged = (s.last_project_slug || null) !== currentSlug;
-    if (epoch !== projectsEpoch || slugChanged || incoming !== current) {
+    if (epoch !== projectsEpoch || incoming !== current) {
       projectsEpoch = epoch;
       void loadProjects()
         .then(() => refreshRoots())
@@ -299,6 +325,7 @@
       if (!currentSlug) {
         const created = await api.createProject('Default');
         currentSlug = created.slug;
+        persistSessionProject(currentSlug);
       }
       await api.addRoot(path);
       folderDialog = false;
@@ -313,10 +340,14 @@
   }
 
   async function selectProject(slug: string) {
+    menuOpen = false;
     error = null;
     try {
+      persistSessionProject(slug);
+      currentSlug = slug;
       const proj = await api.selectProject(slug);
       currentSlug = proj.slug;
+      persistSessionProject(currentSlug);
       await loadProjects();
       await refreshRoots();
       await refreshTree();
@@ -762,13 +793,27 @@
   function onTopbarPointerDown(e: PointerEvent) {
     if (!inWebview || e.button !== 0) return;
     if (isTopbarInteractive(e.target)) return;
-    e.preventDefault();
-    void webviewApi()?.start_drag?.();
+    const origin = { x: e.clientX, y: e.clientY };
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - origin.x;
+      const dy = ev.clientY - origin.y;
+      if (dx * dx + dy * dy < 36) return;
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      void webviewApi()?.start_drag?.();
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
   }
 
   function onTopbarDblClick(e: MouseEvent) {
     if (!inWebview) return;
     if (isTopbarInteractive(e.target)) return;
+    e.preventDefault();
     void webviewApi()?.toggle_maximize?.();
   }
 
@@ -829,6 +874,15 @@
         </button>
         {#if menuOpen}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div
+            class="menu-backdrop"
+            onclick={() => (menuOpen = false)}
+            onpointerdown={(e) => {
+              e.preventDefault();
+              menuOpen = false;
+            }}
+          ></div>
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="menu-drop project-menu" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
             <div class="menu-heading">Projects</div>
             {#each projects as proj (proj.slug)}
@@ -846,6 +900,7 @@
               type="button"
               role="menuitem"
               onclick={() => {
+                menuOpen = false;
                 projectNameDraft = '';
                 projectDialog = 'new';
               }}
@@ -887,6 +942,7 @@
         <span title={rootLabel}>{rootLabel}</span>
       </div>
     </div>
+    <div class="topbar-spacer" title="Drag to move. Double-click to maximize"></div>
     <div class="status">v{version || '…'} · 127.0.0.1:8766</div>
     {#if inWebview}
       <div class="window-chrome" role="group" aria-label="Window">
@@ -913,17 +969,11 @@
   </header>
   {#if inWebview}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="win-resize n" onpointerdown={(e) => startWinResize('top', e)}></div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize s" onpointerdown={(e) => startWinResize('bottom', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize e" onpointerdown={(e) => startWinResize('right', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize w" onpointerdown={(e) => startWinResize('left', e)}></div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="win-resize nw" onpointerdown={(e) => startWinResize('top-left', e)}></div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="win-resize ne" onpointerdown={(e) => startWinResize('top-right', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize sw" onpointerdown={(e) => startWinResize('bottom-left', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
