@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CopyPopup from './CopyPopup.svelte';
+  import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './wordAtPoint';
 
   let {
     src,
@@ -17,6 +19,9 @@
   let error = $state<string | null>(null);
   let loading = $state(true);
   let viewerReady = $state(false);
+  let copyMenu = $state<{ x: number; y: number; text: string; image: HTMLImageElement | null } | null>(
+    null,
+  );
 
   let loadUrl: (url: string) => Promise<void> = async () => {};
 
@@ -24,6 +29,7 @@
     let cancelled = false;
     const lifetime: Array<{ destroy?: () => void; cancel?: () => void }> = [];
     let pageTasks: Array<{ destroy?: () => void; cancel?: () => void }> = [];
+    const blobUrls: string[] = [];
     let pdfjsMod: typeof import('pdfjs-dist') | null = null;
     let pdfWorker: { destroy?: () => void } | null = null;
     let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; destroy?: () => void } | null = null;
@@ -75,6 +81,11 @@
         }
       }
       pageTasks = [];
+    }
+
+    function revokeBlobs() {
+      for (const url of blobUrls) URL.revokeObjectURL(url);
+      blobUrls.length = 0;
     }
 
     function resetLiveScale() {
@@ -142,6 +153,7 @@
       const first = !root.childElementCount;
       if (first) loading = true;
       const frag = document.createDocumentFragment();
+      const nextBlobs: string[] = [];
       try {
         const maxPages = Math.min(pdf.numPages, 200);
         for (let n = 1; n <= maxPages; n++) {
@@ -176,11 +188,32 @@
           });
           pageTasks.push(layer);
           await layer.render();
-          wrap.append(canvas, textDiv);
+          const blob = await new Promise<Blob | null>((resolve) => {
+            canvas.toBlob(resolve, 'image/png');
+          });
+          if (cancelled || gen !== paintGen) return;
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            nextBlobs.push(url);
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = `Page ${n}`;
+            img.draggable = true;
+            img.style.width = `${viewport.width}px`;
+            img.style.height = `${viewport.height}px`;
+            wrap.append(img, textDiv);
+          } else {
+            wrap.append(canvas, textDiv);
+          }
           frag.append(wrap);
         }
-        if (cancelled || gen !== paintGen) return;
+        if (cancelled || gen !== paintGen) {
+          for (const url of nextBlobs) URL.revokeObjectURL(url);
+          return;
+        }
         root.replaceChildren(frag);
+        revokeBlobs();
+        blobUrls.push(...nextBlobs);
         resetLiveScale();
         const firstPage = root.querySelector('.pdf-page') as HTMLElement | null;
         lastWidth = firstPage ? firstPage.offsetWidth : Math.round(pageWidthPt * scale);
@@ -326,6 +359,7 @@
       ro.disconnect();
       frame?.removeEventListener('wheel', onWheel);
       cancelPageTasks();
+      revokeBlobs();
       for (const task of lifetime) {
         try {
           task.cancel?.();
@@ -342,9 +376,46 @@
     const url = src;
     void loadUrl(url);
   });
+
+  function onPdfContextMenu(event: MouseEvent) {
+    const text = selectedTextIn(host) || wordAtPoint(document, event.clientX, event.clientY);
+    const page = event.target instanceof Element ? event.target.closest('.pdf-page') : null;
+    const img =
+      event.target instanceof HTMLImageElement
+        ? event.target
+        : (page?.querySelector('img') ?? null);
+    if (!text && !img) return;
+    event.preventDefault();
+    event.stopPropagation();
+    copyMenu = {
+      x: event.clientX,
+      y: event.clientY,
+      text,
+      image: text ? null : img,
+    };
+  }
+
+  async function copyPdfSelection() {
+    const menu = copyMenu;
+    if (!menu) return;
+    try {
+      if (menu.text) await copyToClipboard(menu.text);
+      else if (menu.image) await copyImageToClipboard(menu.image);
+    } catch {
+      if (menu.text) await copyToClipboard(menu.text);
+    }
+    copyMenu = null;
+  }
 </script>
 
-<div class="pdf-frame doc-frame" class:pdf-frame-overlay={overlay} bind:this={frame}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="pdf-frame doc-frame"
+  class:pdf-frame-overlay={overlay}
+  bind:this={frame}
+  role="document"
+  oncontextmenu={onPdfContextMenu}
+>
   <div class="pdf-fit" bind:this={slot}>
     <div class="pdf-pages" bind:this={host}></div>
   </div>
@@ -357,3 +428,11 @@
     <div class="pdf-status error">{error}</div>
   {/if}
 </div>
+{#if copyMenu}
+  <CopyPopup
+    x={copyMenu.x}
+    y={copyMenu.y}
+    onCopy={copyPdfSelection}
+    onClose={() => (copyMenu = null)}
+  />
+{/if}

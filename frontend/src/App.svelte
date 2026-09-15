@@ -6,7 +6,9 @@
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
   import { api, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type Settings, type TreeNode } from './lib/api';
   import PdfViewer from './lib/PdfViewer.svelte';
+  import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
+  import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
 
   let roots = $state<Root[]>([]);
   let projects = $state<Project[]>([]);
@@ -39,6 +41,10 @@
   let iframeEl = $state<HTMLIFrameElement | null>(null);
   let pdfRootEl = $state<HTMLElement | null>(null);
   let heldHtml = $state<DocumentHit | null>(null);
+  let htmlCopyMenu = $state<{ x: number; y: number; text: string; image: HTMLImageElement | null } | null>(
+    null,
+  );
+  let iframeCopyCleanup: (() => void) | null = null;
   let listQuery = $state('');
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
@@ -747,7 +753,41 @@
   }
 
   function onIframeLoad() {
+    iframeCopyCleanup?.();
+    iframeCopyCleanup = null;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
+    const doc = iframeDoc();
+    const frame = iframeEl;
+    if (!doc || !frame) return;
+    const handler = (event: MouseEvent) => {
+      const text =
+        selectedTextIn(doc.body ?? doc) || wordAtPoint(doc, event.clientX, event.clientY);
+      const img = event.target instanceof HTMLImageElement ? event.target : null;
+      if (!text && !img) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = frame.getBoundingClientRect();
+      htmlCopyMenu = {
+        x: event.clientX + rect.left,
+        y: event.clientY + rect.top,
+        text,
+        image: text ? null : img,
+      };
+    };
+    doc.addEventListener('contextmenu', handler);
+    iframeCopyCleanup = () => doc.removeEventListener('contextmenu', handler);
+  }
+
+  async function copyHtmlSelection() {
+    const menu = htmlCopyMenu;
+    if (!menu) return;
+    try {
+      if (menu.text) await copyToClipboard(menu.text);
+      else if (menu.image) await copyImageToClipboard(menu.image);
+    } catch {
+      if (menu.text) await copyToClipboard(menu.text);
+    }
+    htmlCopyMenu = null;
   }
 
   function onPdfReady(root: HTMLElement) {
@@ -897,6 +937,7 @@
     window.addEventListener('click', onWindowClick);
     window.addEventListener('resize', onResize);
     return () => {
+      iframeCopyCleanup?.();
       stopWatch();
       clearInterval(webviewTick);
       window.removeEventListener('keydown', onKeydown);
@@ -1020,8 +1061,6 @@
   {#if inWebview}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize s" onpointerdown={(e) => startWinResize('bottom', e)}></div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="win-resize e" onpointerdown={(e) => startWinResize('right', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="win-resize w" onpointerdown={(e) => startWinResize('left', e)}></div>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1311,6 +1350,17 @@
     }}
     onClose={() => {
       projectMenu = null;
+    }}
+  />
+{/if}
+
+{#if htmlCopyMenu}
+  <CopyPopup
+    x={htmlCopyMenu.x}
+    y={htmlCopyMenu.y}
+    onCopy={copyHtmlSelection}
+    onClose={() => {
+      htmlCopyMenu = null;
     }}
   />
 {/if}
