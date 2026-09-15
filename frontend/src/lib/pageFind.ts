@@ -8,14 +8,20 @@ const LAYERS: Record<FindLayer, { mark: string; current: string }> = {
   page: { mark: 'lhr-find-page', current: 'lhr-find-page-current' },
 };
 
+function isDocumentNode(root: FindRoot): root is Document {
+  return root.nodeType === 9;
+}
+
 function ownerDoc(root: FindRoot): Document {
-  return root instanceof Document ? root : root.ownerDocument;
+  if (isDocumentNode(root)) return root;
+  const doc = (root as HTMLElement).ownerDocument;
+  if (doc) return doc;
+  return root as unknown as Document;
 }
 
 function queryScope(root: FindRoot): ParentNode {
-  const doc = root as Document & { body?: HTMLElement };
-  if (root instanceof Document || (doc && doc.nodeType === 9 && doc.body)) {
-    return doc.body ?? doc.documentElement ?? root;
+  if (isDocumentNode(root)) {
+    return root.body ?? root.documentElement ?? root;
   }
   return root;
 }

@@ -569,7 +569,7 @@
 
   function iframeDoc(): Document | null {
     try {
-      return iframeEl?.contentDocument ?? null;
+      return iframeEl?.contentDocument ?? iframeEl?.contentWindow?.document ?? null;
     } catch {
       return null;
     }
@@ -584,7 +584,36 @@
       if (pdfRootEl?.isConnected) return pdfRootEl;
       return null;
     }
-    return iframeDoc();
+    const doc = iframeDoc();
+    if (!doc) return null;
+    return doc.body ?? doc.documentElement ?? doc;
+  }
+
+  function withBaseHref(html: string, pageUrl: string): string {
+    const abs = new URL(pageUrl, window.location.href);
+    const dir = `${abs.origin}${abs.pathname.replace(/[^/]+$/, '')}`;
+    const tag = `<base href="${dir.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">`;
+    if (/<base\s/i.test(html)) return html;
+    const withHead = html.replace(/<head([^>]*)>/i, (open) => `${open}${tag}`);
+    if (withHead !== html) return withHead;
+    return `<!doctype html><head>${tag}</head>${html}`;
+  }
+
+  async function loadHtmlFrame(doc: DocumentHit, el: HTMLIFrameElement) {
+    const url = viewUrl(doc.root_id, doc.rel);
+    try {
+      const res = await fetch(url, { headers: { Accept: 'text/html,*/*' } });
+      if (!res.ok) {
+        el.src = url;
+        return;
+      }
+      const html = await res.text();
+      el.removeAttribute('sandbox');
+      el.removeAttribute('src');
+      el.srcdoc = withBaseHref(html, url);
+    } catch {
+      el.src = url;
+    }
   }
 
   let docFindTimer: ReturnType<typeof setTimeout> | undefined;
@@ -601,17 +630,28 @@
       pageMatchCount = 0;
       return;
     }
-    const found = await applyFinds(
-      doc,
-      listQuery,
-      pageQuery,
-      (layer, count) => {
-        if (gen !== docFindGen) return;
-        if (layer === 'list') listMatchCount = count;
-        else pageMatchCount = count;
-      },
-      () => gen !== docFindGen,
-    );
+    let found: { list: HTMLElement[]; page: HTMLElement[] };
+    try {
+      found = await applyFinds(
+        doc,
+        listQuery,
+        pageQuery,
+        (layer, count) => {
+          if (gen !== docFindGen) return;
+          if (layer === 'list') listMatchCount = count;
+          else pageMatchCount = count;
+        },
+        () => gen !== docFindGen,
+      );
+    } catch {
+      listMarks = [];
+      pageMarks = [];
+      listIndex = 0;
+      pageIndex = 0;
+      listMatchCount = 0;
+      pageMatchCount = 0;
+      return;
+    }
     if (gen !== docFindGen) return;
     listMarks = found.list;
     pageMarks = found.page;
@@ -830,6 +870,13 @@
       rel: windowsRelPath(rel),
     };
   }
+
+  $effect(() => {
+    const el = iframeEl;
+    const doc = heldHtml ?? (selected && !isPdfHit(selected) ? selected : null);
+    if (!el || !doc) return;
+    void loadHtmlFrame(doc, el);
+  });
 
   onMount(() => {
     void boot();
@@ -1150,8 +1197,6 @@
                 class:viewer-under={Boolean(heldHtml)}
                 bind:this={iframeEl}
                 title={(heldHtml ?? selected).name}
-                src={viewUrl((heldHtml ?? selected).root_id, (heldHtml ?? selected).rel)}
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 onload={onIframeLoad}
               ></iframe>
             {/key}

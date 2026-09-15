@@ -113,6 +113,18 @@
 
       <article>
         <div class="row">
+          <h2>In-page HTML find uses srcdoc</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-09-15</span>
+        </div>
+        <ul>
+          <li>Right-pane search on HTML still failed after the Content-Disposition fix because find ran against a sandboxed iframe document (PDF search never did — it runs in the parent page).</li>
+          <li>HTML is now loaded with <code>srcdoc</code> so find walks the same-origin document body. List search and find-in-page should match text in the open HTML file.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>HTML search works in the iframe again</h2>
           <span class="chip">4bf0a6b</span>
           <span class="date">2026-09-15</span>
