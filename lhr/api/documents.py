@@ -106,10 +106,14 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
 
     media, _enc = mimetypes.guess_type(str(path))
     if suffix in {".html", ".htm"}:
-        media = "text/html; charset=utf-8"
-    elif suffix == ".pdf":
-        # No filename= — Edge treats Content-Disposition filename in an iframe/embed
-        # as a download and shows "This page has been blocked by Microsoft Edge".
+        # No filename= — Edge blocks iframe documents with Content-Disposition filename
+        # ("This page has been blocked by Microsoft Edge"), so in-page search sees no text.
+        return FileResponse(
+            path,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": "inline"},
+        )
+    if suffix == ".pdf":
         return FileResponse(
             path,
             media_type="application/pdf",
@@ -118,6 +122,5 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
     return FileResponse(
         path,
         media_type=media or "application/octet-stream",
-        filename=path.name,
         content_disposition_type="inline",
     )

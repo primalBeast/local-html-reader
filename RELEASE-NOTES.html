@@ -113,6 +113,18 @@
 
       <article>
         <div class="row">
+          <h2>HTML search works in the iframe again</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-09-15</span>
+        </div>
+        <ul>
+          <li>Edge was blocking HTML in the right pane the same way it blocked PDFs: <code>Content-Disposition</code> with a filename. HTML is now served inline with no filename, so list search and find-in-page can see the page text.</li>
+          <li>Document view URLs no longer append <code>?project=</code>, which broke some HTML docs and in-page search.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Two windows, project menu, toolbar double-click</h2>
           <span class="chip">5074f1a</span>
           <span class="date">2026-09-15</span>

@@ -521,7 +521,8 @@
     query = value;
   }
 
-  function commitTreeSearch() {
+  function commitTreeSearch(value?: string) {
+    if (typeof value === 'string') query = value;
     listQuery = query;
     searching = Boolean(query.trim());
     scheduleDocFind(true, 'list');
@@ -659,7 +660,8 @@
     listQuery = value;
   }
 
-  function commitListSearch() {
+  function commitListSearch(value?: string) {
+    if (typeof value === 'string') listQuery = value;
     scheduleDocFind(true, 'list');
   }
 
@@ -667,7 +669,8 @@
     pageQuery = value;
   }
 
-  function commitPageSearch() {
+  function commitPageSearch(value?: string) {
+    if (typeof value === 'string') pageQuery = value;
     scheduleDocFind(false, 'page');
   }
 

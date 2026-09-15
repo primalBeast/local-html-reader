@@ -48,6 +48,14 @@ def get_root(root_id: str, *, project: str | None = None) -> dict[str, str]:
     for rec in _root_records(enabled_only=False, project=project):
         if rec["id"] == rid:
             return rec
+    if project:
+        raise KeyError(f"unknown documents root: {rid}")
+    from lhr.projects import list_project_slugs
+
+    for slug in list_project_slugs():
+        for rec in _root_records(enabled_only=False, project=slug):
+            if rec["id"] == rid:
+                return rec
     raise KeyError(f"unknown documents root: {rid}")
 
 

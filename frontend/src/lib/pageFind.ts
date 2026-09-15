@@ -13,7 +13,10 @@ function ownerDoc(root: FindRoot): Document {
 }
 
 function queryScope(root: FindRoot): ParentNode {
-  if (root instanceof Document) return root.body ?? root.documentElement ?? root;
+  const doc = root as Document & { body?: HTMLElement };
+  if (root instanceof Document || (doc && doc.nodeType === 9 && doc.body)) {
+    return doc.body ?? doc.documentElement ?? root;
+  }
   return root;
 }
 
@@ -57,7 +60,9 @@ export function clearFind(root: FindRoot, layer?: FindLayer): void {
 }
 
 function isPdfRoot(root: FindRoot): root is HTMLElement {
-  return root instanceof HTMLElement && Boolean(root.querySelector('.textLayer'));
+  if (!(root instanceof HTMLElement)) return false;
+  if (root.closest('.pdf-page, .pdf-pages, .pdf-frame')) return true;
+  return Boolean(root.querySelector(':scope > .pdf-page, :scope > .textLayer, .pdf-page'));
 }
 
 function isSkippedElement(el: Element): boolean {

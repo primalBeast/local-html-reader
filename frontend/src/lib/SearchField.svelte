@@ -51,8 +51,8 @@
     highlight = null;
   }
 
-  function runSearch() {
-    onSearch?.(value);
+  function runSearch(raw?: string) {
+    onSearch?.(raw ?? value);
   }
 
   function commitHistoryOnDismiss() {
@@ -165,8 +165,10 @@
       if (e.key === 'Enter') {
         e.preventDefault();
         if (applyHighlight()) return;
-        runSearch();
-        const term = value.trim();
+        const typed = e.currentTarget.value;
+        onInput(typed);
+        runSearch(typed);
+        const term = typed.trim();
         if (term) onCommitHistory?.(term);
         committedOnDismiss = true;
         closeList();

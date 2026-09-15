@@ -255,7 +255,9 @@ export function viewUrl(rootId: string, rel: string): string {
     .filter(Boolean)
     .map(encodeURIComponent)
     .join('/');
-  return withProject(`/view/${encodeURIComponent(rootId)}/${parts}`);
+  // Do not append ?project= — HTML docs (Jazzy, etc.) treat the query string as
+  // their own, and Edge can fail to load the iframe document for in-page search.
+  return `/view/${encodeURIComponent(rootId)}/${parts}`;
 }
 
 export function windowsRelPath(rel: string): string {

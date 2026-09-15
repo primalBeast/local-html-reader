@@ -213,6 +213,9 @@ def test_list_and_view_html_under_root(client: TestClient, docs_tree: dict[str, 
     assert viewed.status_code == 200
     assert "intro" in viewed.text
     assert "text/html" in viewed.headers.get("content-type", "")
+    disp = (viewed.headers.get("content-disposition") or "").lower()
+    assert "attachment" not in disp
+    assert "filename=" not in disp
 
 
 def test_rejects_path_traversal(client: TestClient, docs_tree: dict[str, Path]):
@@ -289,6 +292,10 @@ def test_content_search_filters_html_files(client: TestClient, docs_tree: dict[s
     client.post("/api/roots", json={"path": str(docs_tree["root"])})
     alpha = client.get("/api/documents", params={"q": "ALPHAUNIQUE"}).json()["documents"]
     assert {d["rel"] for d in alpha} == {"index.html"}
+    alpha_proj = client.get(
+        "/api/documents", params={"q": "ALPHAUNIQUE", "project": "default"}
+    ).json()["documents"]
+    assert {d["rel"] for d in alpha_proj} == {"index.html"}
     beta = client.get("/api/documents", params={"q": "BETAUNIQUE"}).json()["documents"]
     assert {d["rel"] for d in beta} == {"guides/intro.htm"}
     none = client.get("/api/documents", params={"q": "NO_SUCH_TOKEN"}).json()["documents"]
