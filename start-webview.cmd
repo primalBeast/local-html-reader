@@ -2,6 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Local HTML Reader
+if exist "%~dp0lhr\assets\show-splash.ps1" start "" /b powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0lhr\assets\show-splash.ps1"
 
 REM Minimize THIS console (do not hide it). Logs stay in the window; restore from the taskbar.
 powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\minimize-console.ps1"

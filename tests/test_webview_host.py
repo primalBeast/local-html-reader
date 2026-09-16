@@ -89,6 +89,15 @@ def test_f5_script_listens_for_f5():
     assert "toggle_fullscreen" in F5_RELOAD_JS
 
 
+def test_open_webview_uses_app_icon_and_closes_splash():
+    src = inspect.getsource(webview_host.open_webview)
+    assert "icon_path" in src
+    assert 'start_kwargs["icon"]' in src
+    assert "close_splash" in src
+    create = src.split("webview.create_window(", 1)[1].split(")", 1)[0]
+    assert "icon" not in create
+
+
 def test_serve_help_lists_webview(capsys: pytest.CaptureFixture[str]):
     with pytest.raises(SystemExit) as exc:
         main(["serve", "--help"])

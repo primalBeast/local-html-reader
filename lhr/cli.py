@@ -43,6 +43,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
 
     use_webview = bool(getattr(args, "webview", False))
+    if use_webview:
+        from lhr.branding import apply_app_user_model_id, close_splash, start_splash
+
+        apply_app_user_model_id()
+        start_splash()
     url = f"http://{cfg.host}:{cfg.port}"
     if use_webview:
         from lhr.webview_host import open_webview, port_listening
@@ -51,8 +56,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             logging.getLogger("lhr").info("Server already running — opening WebView2 at %s", url)
             try:
                 open_webview(url)
-            except RuntimeError as exc:
+            except Exception as exc:
+                logging.getLogger("lhr").exception("WebView failed")
                 print(exc, file=sys.stderr)
+                close_splash()
                 return 1
             return 0
 
@@ -106,15 +113,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if not wait_for_port(cfg.host, cfg.port):
             logging.getLogger("lhr").error("Server did not start on %s", url)
             server.should_exit = True
+            close_splash()
             return 1
         try:
             open_webview(url)
-        except RuntimeError as exc:
+        except Exception as exc:
+            logging.getLogger("lhr").exception("WebView failed")
             print(exc, file=sys.stderr)
             server.should_exit = True
             thread.join(timeout=5)
+            close_splash()
             return 1
         finally:
+            close_splash()
             server.should_exit = True
             thread.join(timeout=8)
         return 0

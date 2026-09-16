@@ -92,9 +92,11 @@ def create_app() -> FastAPI:
 
     @app.get("/favicon.ico")
     def favicon():
-        fav = dist / "favicon.ico"
-        if fav.exists():
-            return FileResponse(fav)
+        from lhr.branding import icon_path
+
+        for fav in (dist / "favicon.ico", icon_path()):
+            if fav.exists():
+                return FileResponse(fav, media_type="image/x-icon")
         return JSONResponse({"detail": "not found"}, status_code=404)
 
     @app.get("/{full_path:path}")

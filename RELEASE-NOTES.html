@@ -113,6 +113,19 @@
 
       <article>
         <div class="row">
+          <h2>App icon, startup splash, and WebView launch fix</h2>
+          <span class="chip">unreleased</span>
+          <span class="date">2026-09-16</span>
+        </div>
+        <ul>
+          <li>The WebView2 window uses a Local HTML Reader icon in the Windows taskbar instead of the Python icon.</li>
+          <li><code>start-webview.vbs</code> / <code>start-webview.cmd</code> show a splash as soon as you launch, then close it when the main window is ready.</li>
+          <li>Startup no longer dies with “failed to start (code 1)” from passing <code>icon=</code> into pywebview’s <code>create_window</code> (that argument is GTK/Qt only). The icon is set on <code>webview.start</code>.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Regex search, history flags, and find-bar layout</h2>
           <span class="chip">8000103</span>
           <span class="date">2026-09-16</span>

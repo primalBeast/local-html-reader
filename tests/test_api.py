@@ -81,6 +81,13 @@ def test_health(client: TestClient):
     assert "version" in body
 
 
+def test_favicon_is_app_icon(client: TestClient):
+    r = client.get("/favicon.ico")
+    assert r.status_code == 200
+    assert r.content[:4] == b"\x00\x00\x01\x00"
+    assert "icon" in (r.headers.get("content-type") or "")
+
+
 def test_settings_round_trip(client: TestClient):
     r = client.get("/api/settings")
     assert r.status_code == 200
