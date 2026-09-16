@@ -255,35 +255,56 @@ function yieldUi(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+type TextHit = { start: number; end: number };
+
+export type FindFlags = { regex?: boolean; matchCase?: boolean; wholeWord?: boolean };
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hitsInText(text: string, query: string, flags: FindFlags): TextHit[] {
+  const hits: TextHit[] = [];
+  const q = query.trim();
+  if (!q) return hits;
+  let source = flags.regex ? q : escapeRegExp(q);
+  if (flags.wholeWord) {
+    source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;
+  }
+  let re: RegExp;
+  try {
+    re = new RegExp(source, `${flags.matchCase ? '' : 'i'}gu`);
+  } catch {
+    return hits;
+  }
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (!match[0].length) {
+      re.lastIndex += 1;
+      continue;
+    }
+    hits.push({ start: match.index, end: match.index + match[0].length });
+    if (hits.length >= 8000) break;
+  }
+  return hits;
+}
+
 async function wrapMatches(
   root: FindRoot,
   query: string,
   layer: FindLayer,
   onCount?: (n: number) => void,
   cancelled?: () => boolean,
+  flags: FindFlags = {},
 ): Promise<HTMLElement[]> {
   const q = query.trim();
   if (!q) return [];
-  const needle = q.toLowerCase();
   const nodes = collectTextNodes(root);
   if (nodes.length === 0) return [];
 
   const originals = nodes.map((n) => n.textContent || '');
   const joined = originals.join('');
-  const haystack = joined.toLowerCase();
-  if (joined.length !== haystack.length) {
-    return wrapPerNode(nodes, needle, q.length, LAYERS[layer].mark, onCount, cancelled, isPdfRoot(root));
-  }
-
-  const hits: number[] = [];
-  let idx = haystack.indexOf(needle);
-  while (idx !== -1) {
-    if (cancelled?.()) return [];
-    hits.push(idx);
-    onCount?.(hits.length);
-    idx = haystack.indexOf(needle, idx + needle.length);
-    if (hits.length % 8 === 0) await yieldUi();
-  }
+  const hits = hitsInText(joined, q, flags);
   if (hits.length === 0) return [];
 
   const spans: NodeSpan[] = [];
@@ -296,11 +317,11 @@ async function wrapMatches(
 
   const markClass = LAYERS[layer].mark;
   const marks: HTMLElement[] = [];
-  const matchLen = needle.length;
   const pdf = isPdfRoot(root);
   for (let h = hits.length - 1; h >= 0; h--) {
-    const start = hits[h];
-    const end = start + matchLen;
+    if (cancelled?.()) return [];
+    onCount?.(h + 1);
+    const { start, end } = hits[h];
     if (pdf) {
       const group = overlayHit(spans, start, end, markClass);
       if (group) marks.unshift(group);
@@ -317,6 +338,7 @@ async function wrapMatches(
     }
     created.reverse();
     marks.unshift(...created);
+    if (h % 8 === 0) await yieldUi();
   }
   return marks;
 }
@@ -365,22 +387,32 @@ export async function applyFinds(
   pageQuery: string,
   onProgress?: (layer: FindLayer, count: number) => void,
   cancelled?: () => boolean,
+  options?: { list?: FindFlags; page?: FindFlags },
 ): Promise<{ list: HTMLElement[]; page: HTMLElement[] }> {
   injectStyle(root);
   clearFind(root);
   const listQ = listQuery.trim();
   const pageQ = pageQuery.trim();
-  if (listQ && pageQ && listQ.toLowerCase() === pageQ.toLowerCase()) {
+  const listFlags = options?.list ?? {};
+  const pageFlags = options?.page ?? {};
+  const sameQuery =
+    Boolean(listQ) &&
+    Boolean(pageQ) &&
+    listQ === pageQ &&
+    Boolean(listFlags.regex) === Boolean(pageFlags.regex) &&
+    Boolean(listFlags.matchCase) === Boolean(pageFlags.matchCase) &&
+    Boolean(listFlags.wholeWord) === Boolean(pageFlags.wholeWord);
+  if (sameQuery) {
     const marks = await wrapMatches(root, listQ, 'list', (n) => {
       onProgress?.('list', n);
       onProgress?.('page', n);
-    }, cancelled);
+    }, cancelled, listFlags);
     for (const mark of marks) mark.classList.add(LAYERS.page.mark);
     expandCollapsedAround(marks);
     return { list: marks, page: marks };
   }
-  const list = await wrapMatches(root, listQ, 'list', (n) => onProgress?.('list', n), cancelled);
-  const page = await wrapMatches(root, pageQ, 'page', (n) => onProgress?.('page', n), cancelled);
+  const list = await wrapMatches(root, listQ, 'list', (n) => onProgress?.('list', n), cancelled, listFlags);
+  const page = await wrapMatches(root, pageQ, 'page', (n) => onProgress?.('page', n), cancelled, pageFlags);
   expandCollapsedAround([...list, ...page]);
   return { list, page };
 }

@@ -381,28 +381,83 @@ input[type="text"]:focus {
 
 .search-wrap {
   position: relative;
-  display: flex;
-  align-items: center;
+  display: block;
+  min-width: 0;
+}
+
+.search-field {
+  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .search-wrap input[type="text"] {
+  display: block;
   width: 100%;
-  padding-right: 0.55rem;
+  padding-left: 0.55rem;
+  padding-right: 4.85rem;
 }
 
 .search-wrap input.has-clear {
-  padding-right: 1.8rem;
+  padding-right: 6.25rem;
 }
 
 .search-wrap input.has-spinner {
-  padding-right: 2.6rem;
+  padding-right: 5.85rem;
+}
+
+.search-wrap input.has-clear.has-spinner {
+  padding-right: 7.2rem;
+}
+
+.search-field-tools {
+  position: absolute;
+  top: 0;
+  right: 0.12rem;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.04rem;
+}
+
+.search-opts {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.04rem;
+}
+
+.search-opt {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-opt:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.search-opt.on {
+  color: var(--accent);
+  background: rgba(110, 168, 254, 0.2);
 }
 
 .search-spinner {
-  position: absolute;
-  right: 0.45rem;
+  flex: 0 0 auto;
   width: 0.78rem;
   height: 0.78rem;
+  margin: 0 0.1rem;
   border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
   border-radius: 50%;
@@ -410,13 +465,8 @@ input[type="text"]:focus {
   pointer-events: none;
 }
 
-.search-wrap:has(.search-clear) .search-spinner {
-  right: 1.7rem;
-}
-
 .search-clear {
-  position: absolute;
-  right: 0.28rem;
+  flex: 0 0 auto;
   width: 1.35rem;
   height: 1.35rem;
   border: none;
@@ -470,7 +520,9 @@ input[type="text"]:focus {
 .search-history-term {
   flex: 1;
   min-width: 0;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   text-align: left;
   background: transparent;
   color: var(--text);
@@ -482,6 +534,15 @@ input[type="text"]:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.search-history-re {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.9;
 }
 
 .search-history-forget {
@@ -714,7 +775,7 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: 1.15rem;
   min-width: 0;
   width: 100%;
   flex-wrap: wrap;
@@ -724,16 +785,20 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  flex: 0 1 16rem;
-  max-width: min(16rem, 100%);
+  flex: 0 0 auto;
   min-width: 0;
 }
 
+.page-find + .page-find {
+  padding-left: 1.15rem;
+  border-left: 1px solid var(--border-strong);
+}
+
 .page-find .search-wrap {
-  flex: 1 1 auto;
-  width: 11rem;
-  max-width: min(11rem, 100%);
-  min-width: 0;
+  flex: 0 0 16.5rem;
+  width: 16.5rem;
+  min-width: 16.5rem;
+  max-width: 16.5rem;
 }
 
 .list-find-field input[type="text"] {
@@ -741,11 +806,19 @@ input[type="text"]:focus {
 }
 
 .find-count {
+  flex: 0 0 4.75rem;
+  width: 4.75rem;
+  min-width: 4.75rem;
   font-family: var(--mono);
   font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
-  min-width: 3.5rem;
   text-align: right;
+  white-space: nowrap;
+}
+
+.list-find .find-count {
+  margin-right: 0.55rem;
 }
 
 .viewer-stage {
@@ -922,16 +995,19 @@ iframe.doc-frame.viewer-under {
 }
 
 .lhr-pdf-hl-group.lhr-find-page .lhr-pdf-hl {
-  background: rgba(77, 171, 247, 0.4);
+  background: rgba(165, 216, 255, 0.55);
 }
 
 .lhr-pdf-hl-group.lhr-find-list.lhr-find-page .lhr-pdf-hl {
   background: rgba(168, 216, 120, 0.45);
 }
 
-.lhr-pdf-hl-group.lhr-find-list-current .lhr-pdf-hl,
+.lhr-pdf-hl-group.lhr-find-list-current .lhr-pdf-hl {
+  background: rgba(255, 159, 26, 0.55);
+}
+
 .lhr-pdf-hl-group.lhr-find-page-current .lhr-pdf-hl {
-  background: rgba(255, 140, 0, 0.42);
+  background: rgba(77, 171, 247, 0.72);
 }
 
 .viewer-empty {

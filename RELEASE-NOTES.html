@@ -113,6 +113,21 @@
 
       <article>
         <div class="row">
+          <h2>Regex search, history flags, and find-bar layout</h2>
+          <span class="chip">unreleased</span>
+          <span class="date">2026-09-16</span>
+        </div>
+        <ul>
+          <li><strong>Aa / W / .*</strong> on every search box. Tree search, From list search, and Find in page honor match case, whole word, and regular expressions. Left-pane search shares those flags with From list search.</li>
+          <li><strong>History.</strong> Each recent term stores those flags. Picking a row restores them (rows show Aa / W / .* when they apply). Turning an option on or off updates that term in history.</li>
+          <li><strong>Find bar.</strong> The right pane keeps two boxes. Match counts always show, including <code>0 / 0</code>. List-find <code>n / n</code> sits to the left of its box. Aa, W, .*, and the clear × sit inside the boxes.</li>
+          <li><strong>Keyboard.</strong> With history open, arrows move through recent terms; with it closed, they move through matches. Esc hides the history list without clearing the query. Switching project clears the left search.</li>
+          <li>The Copy menu closes when you click the HTML page, the same way it does on Windows.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Scrollbar, PDF selection, and Copy popup</h2>
           <span class="chip">664dcce</span>
           <span class="date">2026-09-15</span>

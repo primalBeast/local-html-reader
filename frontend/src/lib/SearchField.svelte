@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { SearchHistoryItem } from './api';
 
   let {
     value,
@@ -14,20 +15,36 @@
     onRemove,
     onCommitHistory,
     onSearch,
+    onNext,
+    onPrev,
+    regex = false,
+    matchCase = false,
+    wholeWord = false,
+    onRegexChange,
+    onMatchCaseChange,
+    onWholeWordChange,
     bindInput,
   }: {
     value: string;
     placeholder: string;
     ariaLabel: string;
-    history?: string[];
+    history?: SearchHistoryItem[];
     searching?: boolean;
     extraClass?: string;
     onInput: (value: string) => void;
     onClear: () => void;
-    onPick: (term: string) => void;
+    onPick: (term: string, flags: { regex: boolean; matchCase: boolean; wholeWord: boolean }) => void;
     onRemove?: (term: string) => void;
-    onCommitHistory?: (term: string) => void;
+    onCommitHistory?: (term: string, flags: { regex: boolean; matchCase: boolean; wholeWord: boolean }) => void;
     onSearch?: (value: string) => void;
+    onNext?: () => void;
+    onPrev?: () => void;
+    regex?: boolean;
+    matchCase?: boolean;
+    wholeWord?: boolean;
+    onRegexChange?: (value: boolean) => void;
+    onMatchCaseChange?: (value: boolean) => void;
+    onWholeWordChange?: (value: boolean) => void;
     bindInput?: (el: HTMLInputElement | null) => void;
   } = $props();
 
@@ -36,6 +53,7 @@
   let wrapEl = $state<HTMLDivElement | null>(null);
   let listEl = $state<HTMLUListElement | null>(null);
   let committedOnDismiss = false;
+  let lastSearched = '';
 
   function bindField(node: HTMLInputElement) {
     bindInput?.(node);
@@ -60,7 +78,7 @@
     committedOnDismiss = true;
     runSearch();
     const term = value.trim();
-    if (term) onCommitHistory?.(term);
+    if (term) onCommitHistory?.(term, { regex, matchCase, wholeWord });
     closeList();
   }
 
@@ -69,7 +87,9 @@
     commitHistoryOnDismiss();
   }
 
-  function onInputBlur() {
+  function onInputBlur(event: FocusEvent) {
+    const next = event.relatedTarget;
+    if (next instanceof Node && wrapEl?.contains(next)) return;
     requestAnimationFrame(() => {
       if (!wrapEl?.contains(document.activeElement)) commitHistoryOnDismiss();
     });
@@ -92,11 +112,29 @@
 
   function applyHighlight() {
     if (highlight === null) return false;
-    const term = history[highlight];
-    if (!term) return false;
+    const item = history[highlight];
+    if (!item) return false;
     closeList();
-    onPick(term);
+    onPick(item.term, {
+      regex: item.regex,
+      matchCase: item.matchCase,
+      wholeWord: item.wholeWord,
+    });
     return true;
+  }
+
+  function toggleOpt(kind: 'regex' | 'matchCase' | 'wholeWord') {
+    lastSearched = '';
+    const next = {
+      regex: kind === 'regex' ? !regex : regex,
+      matchCase: kind === 'matchCase' ? !matchCase : matchCase,
+      wholeWord: kind === 'wholeWord' ? !wholeWord : wholeWord,
+    };
+    if (kind === 'regex') onRegexChange?.(next.regex);
+    else if (kind === 'matchCase') onMatchCaseChange?.(next.matchCase);
+    else onWholeWordChange?.(next.wholeWord);
+    const term = value.trim();
+    if (term) onCommitHistory?.(term, next);
   }
 
   $effect(() => {
@@ -120,6 +158,7 @@
 </script>
 
 <div class="search-wrap {extraClass}" bind:this={wrapEl}>
+  <div class="search-field">
   <input
     use:bindField
     type="text"
@@ -133,11 +172,16 @@
     class:has-spinner={searching}
     oninput={(e) => {
       committedOnDismiss = false;
+      lastSearched = '';
       closeList();
       onInput(e.currentTarget.value);
     }}
     onfocus={() => {
       committedOnDismiss = false;
+      if (history.length) {
+        open = true;
+        highlight = null;
+      }
     }}
     onpointerdown={(e) => {
       if (e.button === 0) {
@@ -148,18 +192,30 @@
     onblur={onInputBlur}
     onkeydown={(e) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         closeList();
         return;
       }
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
-        moveHighlight(1);
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        if (!open) return;
-        e.preventDefault();
-        moveHighlight(-1);
+        e.stopPropagation();
+        const historyShowing = open && history.length > 0;
+        const down = e.key === 'ArrowDown';
+        if (historyShowing) {
+          moveHighlight(down ? 1 : -1);
+          return;
+        }
+        if (down && onNext) {
+          onNext();
+          return;
+        }
+        if (!down && onPrev) {
+          onPrev();
+          return;
+        }
+        if (down) moveHighlight(1);
+        else if (open) moveHighlight(-1);
         return;
       }
       if (e.key === 'Enter') {
@@ -167,9 +223,15 @@
         if (applyHighlight()) return;
         const typed = e.currentTarget.value;
         onInput(typed);
+        if (onNext && typed === lastSearched && typed.trim()) {
+          closeList();
+          onNext();
+          return;
+        }
+        lastSearched = typed;
         runSearch(typed);
         const term = typed.trim();
-        if (term) onCommitHistory?.(term);
+        if (term) onCommitHistory?.(term, { regex, matchCase, wholeWord });
         committedOnDismiss = true;
         closeList();
         return;
@@ -186,15 +248,74 @@
       }
     }}
   />
-  {#if searching}
-    <span class="search-spinner" aria-label="Searching" role="status"></span>
-  {/if}
-  {#if value}
-    <button class="search-clear" type="button" tabindex="-1" onclick={() => onClear()} aria-label="Clear search">×</button>
-  {/if}
+    <div class="search-field-tools">
+      <div class="search-opts">
+        <button
+          class="search-opt"
+          class:on={matchCase}
+          type="button"
+          tabindex="-1"
+          title={matchCase ? 'Match case on' : 'Match case off'}
+          aria-pressed={matchCase}
+          aria-label="Match case"
+          onmousedown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onclick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleOpt('matchCase');
+          }}
+        >Aa</button>
+        <button
+          class="search-opt"
+          class:on={wholeWord}
+          type="button"
+          tabindex="-1"
+          title={wholeWord ? 'Whole word on' : 'Whole word off'}
+          aria-pressed={wholeWord}
+          aria-label="Whole word"
+          onmousedown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onclick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleOpt('wholeWord');
+          }}
+        >W</button>
+        <button
+          class="search-opt"
+          class:on={regex}
+          type="button"
+          tabindex="-1"
+          title={regex ? 'Regular expression on' : 'Regular expression off'}
+          aria-pressed={regex}
+          aria-label="Regular expression"
+          onmousedown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onclick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleOpt('regex');
+          }}
+        >.*</button>
+      </div>
+      {#if searching}
+        <span class="search-spinner" aria-label="Searching" role="status"></span>
+      {/if}
+      {#if value}
+        <button class="search-clear" type="button" tabindex="-1" onclick={() => onClear()} aria-label="Clear search">×</button>
+      {/if}
+    </div>
+  </div>
   {#if open && history.length}
     <ul class="search-history" bind:this={listEl} aria-label="Recent searches">
-      {#each history as term, i (term)}
+      {#each history as item, i (item.term)}
         <li class="search-history-row" class:active={highlight === i}>
           <button
             class="search-history-term"
@@ -206,24 +327,31 @@
             }}
             onclick={() => {
               closeList();
-              onPick(term);
+              onPick(item.term, {
+                regex: item.regex,
+                matchCase: item.matchCase,
+                wholeWord: item.wholeWord,
+              });
             }}
           >
-            {term}
+            {item.term}
+            {#if item.matchCase}<span class="search-history-re" title="Match case">Aa</span>{/if}
+            {#if item.wholeWord}<span class="search-history-re" title="Whole word">W</span>{/if}
+            {#if item.regex}<span class="search-history-re" title="Regular expression">.*</span>{/if}
           </button>
           {#if onRemove}
             <button
               class="search-history-forget"
               type="button"
               tabindex="-1"
-              aria-label="Remove {term} from history"
+              aria-label="Remove {item.term} from history"
               onmousedown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
               }}
               onclick={(e) => {
                 e.stopPropagation();
-                onRemove(term);
+                onRemove(item.term);
               }}
             >
               ×

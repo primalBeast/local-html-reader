@@ -117,15 +117,41 @@ def _rel_posix(root: Path, file_path: Path) -> str:
     return rel.as_posix()
 
 
-def _content_contains(path: Path, needle: str, root: Path | None = None) -> bool:
-    """True if searchable document text contains needle (case-insensitive)."""
-    return text_matches_query(extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES), needle)
+def _content_contains(
+    path: Path,
+    needle: str,
+    root: Path | None = None,
+    *,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+) -> bool:
+    """True if searchable document text contains needle."""
+    return text_matches_query(
+        extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES),
+        needle,
+        regex=regex,
+        match_case=match_case,
+        whole_word=whole_word,
+    )
 
 
-def _file_matches_query(path: Path, name: str, rel: str, needle: str, root: Path | None = None) -> bool:
+def _file_matches_query(
+    path: Path,
+    name: str,
+    rel: str,
+    needle: str,
+    root: Path | None = None,
+    *,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+) -> bool:
     if not needle:
         return True
-    return _content_contains(path, needle, root=root)
+    return _content_contains(
+        path, needle, root=root, regex=regex, match_case=match_case, whole_word=whole_word
+    )
 
 
 def iter_matching_html(
@@ -133,9 +159,12 @@ def iter_matching_html(
     root_id: str | None = None,
     limit: int = MAX_LIST,
     project: str | None = None,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
 ):
     """Yield matching HTML file hits one at a time (for live search counts)."""
-    needle = (query or "").strip().lower()
+    needle = (query or "").strip()
     records = _root_records(project=project)
     if root_id:
         records = [r for r in records if r["id"] == root_id]
@@ -172,7 +201,16 @@ def iter_matching_html(
                     normalize_rel(rel)
                 except (OSError, ValueError, PathEscapeError):
                     continue
-                if not _file_matches_query(file_path, name, rel, needle, root=root_r):
+                if not _file_matches_query(
+                    file_path,
+                    name,
+                    rel,
+                    needle,
+                    root=root_r,
+                    regex=regex,
+                    match_case=match_case,
+                    whole_word=whole_word,
+                ):
                     continue
                 try:
                     st = file_path.stat()
@@ -199,8 +237,21 @@ def list_documents(
     root_id: str | None = None,
     limit: int = MAX_LIST,
     project: str | None = None,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
 ) -> dict[str, Any]:
-    hits = list(iter_matching_html(query=query, root_id=root_id, limit=limit, project=project))
+    hits = list(
+        iter_matching_html(
+            query=query,
+            root_id=root_id,
+            limit=limit,
+            project=project,
+            regex=regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
+    )
     truncated = len(hits) >= max(1, min(int(limit), MAX_LIST))
     hits.sort(key=lambda h: (h["root_path"].lower(), h["rel"].lower()))
     return {"documents": hits, "truncated": truncated}
@@ -275,8 +326,19 @@ def document_tree(
     root_id: str | None = None,
     limit: int = MAX_LIST,
     project: str | None = None,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
 ) -> dict[str, Any]:
-    listed = list_documents(query=query, root_id=root_id, limit=limit, project=project)
+    listed = list_documents(
+        query=query,
+        root_id=root_id,
+        limit=limit,
+        project=project,
+        regex=regex,
+        match_case=match_case,
+        whole_word=whole_word,
+    )
     hits = listed["documents"]
     return {
         "tree": _tree_from_hits(hits),

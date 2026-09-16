@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from lhr.html_text import html_visible_text
@@ -15,18 +16,47 @@ PDF_SUFFIXES = {".pdf"}
 DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES
 
 
-def text_matches_query(text: str, needle: str) -> bool:
-    """Case-insensitive match; also ignores whitespace so spaced PDF glyphs hit."""
-    q = (needle or "").strip().lower()
-    if not q:
+def text_matches_query(
+    text: str,
+    needle: str,
+    *,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+) -> bool:
+    """Match needle in extracted document text."""
+    raw = (needle or "").strip()
+    if not raw:
         return True
-    hay = text.lower()
-    if q in hay:
-        return True
-    compact_q = "".join(q.split())
-    if not compact_q:
+    flags = re.UNICODE
+    if not match_case:
+        flags |= re.IGNORECASE
+    if regex:
+        source = raw
+        flags |= re.DOTALL
+    else:
+        source = re.escape(raw)
+    if whole_word:
+        source = rf"(?<![\w])(?:{source})(?![\w])"
+    try:
+        pat = re.compile(source, flags)
+    except re.error:
         return False
-    return compact_q in "".join(hay.split())
+    if pat.search(text):
+        return True
+    if whole_word:
+        return False
+    compact = "".join(text.split())
+    if pat.search(compact):
+        return True
+    if not regex:
+        compact_q = "".join(raw.split())
+        if not compact_q:
+            return False
+        if match_case:
+            return compact_q in compact
+        return compact_q.lower() in compact.lower()
+    return False
 
 
 def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int = 8 * 1024 * 1024) -> str:

@@ -33,22 +33,42 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
-def normalize_search_history(value: Any) -> list[str]:
+def normalize_search_history(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    out: list[str] = []
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in value:
-        if not isinstance(item, str):
+        regex = False
+        match_case = False
+        whole_word = False
+        text = ""
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            raw = item.get("term")
+            if not isinstance(raw, str):
+                continue
+            text = raw.strip()
+            regex = bool(item.get("regex"))
+            match_case = bool(item.get("match_case") or item.get("matchCase"))
+            whole_word = bool(item.get("whole_word") or item.get("wholeWord"))
+        else:
             continue
-        text = item.strip()
         if not text:
             continue
         key = text.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(text)
+        out.append(
+            {
+                "term": text,
+                "regex": regex,
+                "match_case": match_case,
+                "whole_word": whole_word,
+            }
+        )
         if len(out) >= SEARCH_HISTORY_MAX:
             break
     return out
@@ -149,27 +169,47 @@ def patch_settings(updates: dict[str, Any], *, project: str | None = None) -> di
         return save_settings(data)
 
 
-def add_search_term(bucket: str, term: str) -> list[str]:
+def add_search_term(
+    bucket: str,
+    term: str,
+    *,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+) -> list[dict[str, Any]]:
     if bucket not in ("search_history", "page_search_history"):
         raise ValueError("unknown history list")
     with settings_write_lock():
         data = load_settings()
-        data[bucket] = normalize_search_history([term, *(data.get(bucket) or [])])
+        data[bucket] = normalize_search_history(
+            [
+                {
+                    "term": term,
+                    "regex": regex,
+                    "match_case": match_case,
+                    "whole_word": whole_word,
+                },
+                *(data.get(bucket) or []),
+            ]
+        )
         save_settings(data)
         return list(data[bucket])
 
 
-def remove_search_term(bucket: str, term: str) -> list[str]:
+def remove_search_term(bucket: str, term: str) -> list[dict[str, Any]]:
     if bucket not in ("search_history", "page_search_history"):
         raise ValueError("unknown history list")
     needle = (term or "").strip().lower()
     with settings_write_lock():
         data = load_settings()
         current = data.get(bucket) or []
-        data[bucket] = [
-            item
-            for item in current
-            if not (isinstance(item, str) and item.strip().lower() == needle)
-        ]
+        kept: list[Any] = []
+        for item in current:
+            if isinstance(item, str) and item.strip().lower() == needle:
+                continue
+            if isinstance(item, dict) and str(item.get("term") or "").strip().lower() == needle:
+                continue
+            kept.append(item)
+        data[bucket] = normalize_search_history(kept)
         save_settings(data)
         return list(data[bucket])

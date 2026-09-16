@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { bindMenuDismiss } from './dismissMenu';
 
   let {
     x,
@@ -33,14 +34,7 @@
     top = nextTop;
   });
 
-  onMount(() => {
-    const close = (event: PointerEvent) => {
-      if (el && event.target instanceof Node && el.contains(event.target)) return;
-      onClose();
-    };
-    document.addEventListener('pointerdown', close, true);
-    return () => document.removeEventListener('pointerdown', close, true);
-  });
+  onMount(() => bindMenuDismiss(() => el, onClose));
 </script>
 
 <div

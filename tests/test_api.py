@@ -99,12 +99,17 @@ def test_settings_round_trip(client: TestClient):
         "/api/settings",
         json={"search_history": ["noURLResponse", "  noURLResponse  ", "", "Cache"]},
     )
-    assert hist.json()["search_history"] == ["noURLResponse", "Cache"]
+    assert hist.json()["search_history"] == [
+        {"term": "noURLResponse", "regex": False, "match_case": False, "whole_word": False},
+        {"term": "Cache", "regex": False, "match_case": False, "whole_word": False},
+    ]
     page_hist = client.patch(
         "/api/settings",
         json={"page_search_history": ["task", "task", ""]},
     )
-    assert page_hist.json()["page_search_history"] == ["task"]
+    assert page_hist.json()["page_search_history"] == [
+        {"term": "task", "regex": False, "match_case": False, "whole_word": False}
+    ]
 
 
 def test_history_add_merges_and_delete_syncs(client: TestClient):
@@ -117,14 +122,21 @@ def test_history_add_merges_and_delete_syncs(client: TestClient):
         "/api/settings/history",
         json={"bucket": "search_history", "term": "beta"},
     )
-    assert second.json()["history"][:2] == ["beta", "alpha"]
+    assert second.json()["history"][:2] == [
+        {"term": "beta", "regex": False, "match_case": False, "whole_word": False},
+        {"term": "alpha", "regex": False, "match_case": False, "whole_word": False},
+    ]
     gone = client.delete(
         "/api/settings/history",
         params={"bucket": "search_history", "term": "alpha"},
     )
     assert gone.status_code == 200
-    assert gone.json()["history"] == ["beta"]
-    assert client.get("/api/settings").json()["search_history"] == ["beta"]
+    assert gone.json()["history"] == [
+        {"term": "beta", "regex": False, "match_case": False, "whole_word": False}
+    ]
+    assert client.get("/api/settings").json()["search_history"] == [
+        {"term": "beta", "regex": False, "match_case": False, "whole_word": False}
+    ]
 
 
 def test_history_delete_is_case_insensitive(client: TestClient):
@@ -134,6 +146,29 @@ def test_history_delete_is_case_insensitive(client: TestClient):
         params={"bucket": "page_search_history", "term": "task"},
     )
     assert gone.json()["history"] == []
+
+
+def test_history_remembers_regex_flag(client: TestClient):
+    added = client.post(
+        "/api/settings/history",
+        json={"bucket": "search_history", "term": "foo.*", "regex": True},
+    )
+    assert added.json()["history"][0] == {
+        "term": "foo.*",
+        "regex": True,
+        "match_case": False,
+        "whole_word": False,
+    }
+    again = client.post(
+        "/api/settings/history",
+        json={"bucket": "search_history", "term": "foo.*", "regex": False},
+    )
+    assert again.json()["history"][0] == {
+        "term": "foo.*",
+        "regex": False,
+        "match_case": False,
+        "whole_word": False,
+    }
 
 
 def test_add_root_requires_absolute_existing_dir(client: TestClient, tmp_path: Path):
@@ -300,6 +335,10 @@ def test_content_search_filters_html_files(client: TestClient, docs_tree: dict[s
     assert {d["rel"] for d in beta} == {"guides/intro.htm"}
     none = client.get("/api/documents", params={"q": "NO_SUCH_TOKEN"}).json()["documents"]
     assert none == []
+    rx = client.get("/api/documents", params={"q": "ALPHAUNI.*", "use_regex": True}).json()["documents"]
+    assert {d["rel"] for d in rx} == {"index.html"}
+    rx_miss = client.get("/api/documents", params={"q": "ALPHAUNI.*"}).json()["documents"]
+    assert rx_miss == []
 
 
 def test_tree_stream_counts_matches(client: TestClient, docs_tree: dict[str, Path]):

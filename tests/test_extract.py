@@ -13,6 +13,19 @@ def test_text_matches_ignores_pdf_glyph_spacing() -> None:
     assert not text_matches_query("044147S", "044147J")
 
 
+def test_text_matches_regex() -> None:
+    assert text_matches_query("error code 404 and 500", r"\d{3}", regex=True)
+    assert not text_matches_query("no digits here", r"\d{3}", regex=True)
+    assert not text_matches_query("abc", r"[", regex=True)
+
+
+def test_text_matches_case_and_whole_word() -> None:
+    assert text_matches_query("Alpha alpha", "Alpha", match_case=True)
+    assert not text_matches_query("alpha", "Alpha", match_case=True)
+    assert text_matches_query("the cat sat", "cat", whole_word=True)
+    assert not text_matches_query("the catalog sat", "cat", whole_word=True)
+
+
 def _pdf_with_token(token: str = "PDFUNIQUETOKEN", *, encrypt: bool = False) -> bytes:
     writer = PdfWriter()
     page = writer.add_blank_page(width=300, height=144)

@@ -39,6 +39,74 @@ export type TreeNode = {
   children?: TreeNode[];
 };
 
+export type SearchHistoryItem = {
+  term: string;
+  regex: boolean;
+  matchCase: boolean;
+  wholeWord: boolean;
+};
+
+export type SearchFlags = { regex?: boolean; matchCase?: boolean; wholeWord?: boolean };
+
+export function searchFlagsFromUnknown(raw: unknown): {
+  regex: boolean;
+  matchCase: boolean;
+  wholeWord: boolean;
+} {
+  if (typeof raw === 'boolean') {
+    return { regex: raw, matchCase: false, wholeWord: false };
+  }
+  if (raw && typeof raw === 'object') {
+    const row = raw as {
+      regex?: unknown;
+      matchCase?: unknown;
+      match_case?: unknown;
+      wholeWord?: unknown;
+      whole_word?: unknown;
+    };
+    return {
+      regex: Boolean(row.regex),
+      matchCase: Boolean(row.matchCase ?? row.match_case),
+      wholeWord: Boolean(row.wholeWord ?? row.whole_word),
+    };
+  }
+  return { regex: false, matchCase: false, wholeWord: false };
+}
+
+export function historyFromUnknown(
+  raw: unknown,
+  previous: SearchHistoryItem[] = [],
+): SearchHistoryItem[] {
+  if (!Array.isArray(raw)) return [];
+  const prevByTerm = new Map(previous.map((row) => [row.term.toLowerCase(), row]));
+  const out: SearchHistoryItem[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    let term = '';
+    let flags = { regex: false, matchCase: false, wholeWord: false };
+    if (typeof item === 'string') {
+      term = item.trim();
+      const prev = prevByTerm.get(term.toLowerCase());
+      if (prev) flags = { regex: prev.regex, matchCase: prev.matchCase, wholeWord: prev.wholeWord };
+    } else if (item && typeof item === 'object' && typeof (item as { term?: unknown }).term === 'string') {
+      term = (item as { term: string }).term.trim();
+      flags = searchFlagsFromUnknown(item);
+    }
+    if (!term) continue;
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ term, ...flags });
+  }
+  return out;
+}
+
+function applySearchFlags(params: URLSearchParams, flags?: SearchFlags): void {
+  if (flags?.regex) params.set('use_regex', 'true');
+  if (flags?.matchCase) params.set('match_case', 'true');
+  if (flags?.wholeWord) params.set('whole_word', 'true');
+}
+
 export type Settings = {
   schema_version: number;
   roots: Array<{ id: string; path: string }>;
@@ -46,8 +114,8 @@ export type Settings = {
   last_project_slug: string | null;
   projects_epoch: number;
   sidebar_width: number;
-  search_history: string[];
-  page_search_history: string[];
+  search_history: SearchHistoryItem[];
+  page_search_history: SearchHistoryItem[];
   window: { last_host: string; last_port: number };
 };
 
@@ -95,14 +163,24 @@ export const api = {
   settings: () => request<Settings>('/api/settings'),
   patchSettings: (body: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(body) }),
-  addHistory: (bucket: 'search_history' | 'page_search_history', term: string) =>
-    request<{ bucket: string; history: string[] }>('/api/settings/history', {
+  addHistory: (
+    bucket: 'search_history' | 'page_search_history',
+    term: string,
+    flags?: SearchFlags,
+  ) =>
+    request<{ bucket: string; history: SearchHistoryItem[] }>('/api/settings/history', {
       method: 'POST',
-      body: JSON.stringify({ bucket, term }),
+      body: JSON.stringify({
+        bucket,
+        term,
+        regex: Boolean(flags?.regex),
+        match_case: Boolean(flags?.matchCase),
+        whole_word: Boolean(flags?.wholeWord),
+      }),
     }),
   removeHistory: (bucket: 'search_history' | 'page_search_history', term: string) => {
     const params = new URLSearchParams({ bucket, term });
-    return request<{ bucket: string; history: string[] }>(
+    return request<{ bucket: string; history: SearchHistoryItem[] }>(
       `/api/settings/history?${params.toString()}`,
       { method: 'DELETE' },
     );
@@ -162,19 +240,21 @@ export const api = {
     request<{ ok: boolean; id: string }>(`/api/roots/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
-  documents: (q?: string, rootId?: string) => {
+  documents: (q?: string, rootId?: string, flags?: SearchFlags) => {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (rootId) params.set('root_id', rootId);
+    applySearchFlags(params, flags);
     const qs = params.toString();
     return request<{ documents: DocumentHit[]; truncated: boolean }>(
       `/api/documents${qs ? `?${qs}` : ''}`,
     );
   },
-  tree: (q?: string, rootId?: string) => {
+  tree: (q?: string, rootId?: string, flags?: SearchFlags) => {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (rootId) params.set('root_id', rootId);
+    applySearchFlags(params, flags);
     const qs = params.toString();
     return request<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }>(
       `/api/tree${qs ? `?${qs}` : ''}`,
@@ -184,9 +264,11 @@ export const api = {
     q: string | undefined,
     onProgress: (fileCount: number) => void,
     signal?: AbortSignal,
+    flags?: SearchFlags,
   ): Promise<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }> {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
+    applySearchFlags(params, flags);
     const qs = params.toString();
     const url = withProject(`/api/tree/stream${qs ? `?${qs}` : ''}`);
     try {

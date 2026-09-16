@@ -4,7 +4,7 @@
   import SearchField from './lib/SearchField.svelte';
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
-  import { api, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type Settings, type TreeNode } from './lib/api';
+  import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type Settings, type TreeNode } from './lib/api';
   import PdfViewer from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
@@ -20,10 +20,16 @@
   let fileCount = $state(0);
   let truncated = $state(false);
   let query = $state('');
+  let treeRegex = $state(false);
+  let treeMatchCase = $state(false);
+  let treeWholeWord = $state(false);
+  let pageRegex = $state(false);
+  let pageMatchCase = $state(false);
+  let pageWholeWord = $state(false);
   let appliedQuery = $state('');
   let searching = $state(false);
-  let searchHistory = $state<string[]>([]);
-  let pageHistory = $state<string[]>([]);
+  let searchHistory = $state<SearchHistoryItem[]>([]);
+  let pageHistory = $state<SearchHistoryItem[]>([]);
   let selected = $state<DocumentHit | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -122,7 +128,7 @@
 
   let searchGen = 0;
 
-  function cacheHistory(storageKey: string, items: string[]) {
+  function cacheHistory(storageKey: string, items: SearchHistoryItem[]) {
     try {
       localStorage.setItem(storageKey, JSON.stringify(items));
     } catch {
@@ -130,67 +136,85 @@
     }
   }
 
-  function rememberSearch(term: string) {
+  function rememberSearch(
+    term: string,
+    flags: { regex?: boolean; matchCase?: boolean; wholeWord?: boolean } = {},
+  ) {
     const t = term.trim();
     if (!t) return;
-    searchHistory = [t, ...searchHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())].slice(
-      0,
-      HISTORY_MAX,
-    );
+    const item = {
+      term: t,
+      regex: Boolean(flags.regex),
+      matchCase: Boolean(flags.matchCase),
+      wholeWord: Boolean(flags.wholeWord),
+    };
+    searchHistory = [
+      item,
+      ...searchHistory.filter((row) => row.term.toLowerCase() !== t.toLowerCase()),
+    ].slice(0, HISTORY_MAX);
     cacheHistory(HISTORY_STORAGE, searchHistory);
     void api
-      .addHistory('search_history', t)
+      .addHistory('search_history', t, item)
       .then((res) => {
-        searchHistory = res.history;
-        cacheHistory(HISTORY_STORAGE, res.history);
+        searchHistory = historyFromUnknown(res.history, searchHistory);
+        cacheHistory(HISTORY_STORAGE, searchHistory);
       })
       .catch(() => undefined);
   }
 
-  function rememberPageSearch(term: string) {
+  function rememberPageSearch(
+    term: string,
+    flags: { regex?: boolean; matchCase?: boolean; wholeWord?: boolean } = {},
+  ) {
     const t = term.trim();
     if (!t) return;
-    pageHistory = [t, ...pageHistory.filter((item) => item.toLowerCase() !== t.toLowerCase())].slice(
-      0,
-      HISTORY_MAX,
-    );
+    const item = {
+      term: t,
+      regex: Boolean(flags.regex),
+      matchCase: Boolean(flags.matchCase),
+      wholeWord: Boolean(flags.wholeWord),
+    };
+    pageHistory = [
+      item,
+      ...pageHistory.filter((row) => row.term.toLowerCase() !== t.toLowerCase()),
+    ].slice(0, HISTORY_MAX);
     cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
     void api
-      .addHistory('page_search_history', t)
+      .addHistory('page_search_history', t, item)
       .then((res) => {
-        pageHistory = res.history;
-        cacheHistory(PAGE_HISTORY_STORAGE, res.history);
+        pageHistory = historyFromUnknown(res.history, pageHistory);
+        cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
       })
       .catch(() => undefined);
   }
 
   function removeSearchHistory(term: string) {
-    searchHistory = searchHistory.filter((item) => item.toLowerCase() !== term.toLowerCase());
+    searchHistory = searchHistory.filter((item) => item.term.toLowerCase() !== term.toLowerCase());
     cacheHistory(HISTORY_STORAGE, searchHistory);
     void api
       .removeHistory('search_history', term)
       .then((res) => {
-        searchHistory = res.history;
-        cacheHistory(HISTORY_STORAGE, res.history);
+        searchHistory = historyFromUnknown(res.history, searchHistory);
+        cacheHistory(HISTORY_STORAGE, searchHistory);
       })
       .catch(() => undefined);
   }
 
   function removePageHistory(term: string) {
-    pageHistory = pageHistory.filter((item) => item.toLowerCase() !== term.toLowerCase());
+    pageHistory = pageHistory.filter((item) => item.term.toLowerCase() !== term.toLowerCase());
     cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
     void api
       .removeHistory('page_search_history', term)
       .then((res) => {
-        pageHistory = res.history;
-        cacheHistory(PAGE_HISTORY_STORAGE, res.history);
+        pageHistory = historyFromUnknown(res.history, pageHistory);
+        cacheHistory(PAGE_HISTORY_STORAGE, pageHistory);
       })
       .catch(() => undefined);
   }
 
   function applySharedSettings(s: Settings) {
-    const nextSearch = historyFromUnknown(s.search_history);
-    const nextPage = historyFromUnknown(s.page_search_history);
+    const nextSearch = historyFromUnknown(s.search_history, searchHistory);
+    const nextPage = historyFromUnknown(s.page_search_history, pageHistory);
     if (JSON.stringify(nextSearch) !== JSON.stringify(searchHistory)) {
       searchHistory = nextSearch;
       cacheHistory(HISTORY_STORAGE, nextSearch);
@@ -208,11 +232,6 @@
         .then(() => refreshRoots())
         .then(() => refreshTree());
     }
-  }
-
-  function historyFromUnknown(raw: unknown): string[] {
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
   }
 
   let treeAbort: AbortController | null = null;
@@ -241,6 +260,7 @@
           if (gen === searchGen) fileCount = n;
         },
         signal,
+        { regex: treeRegex, matchCase: treeMatchCase, wholeWord: treeWholeWord },
       );
       if (gen !== searchGen) return;
       tree = data.tree;
@@ -269,23 +289,27 @@
           /* ignore */
         }
       }
+      let cachedSearch: SearchHistoryItem[] = [];
+      let cachedPage: SearchHistoryItem[] = [];
+      try {
+        cachedSearch = historyFromUnknown(JSON.parse(localStorage.getItem(HISTORY_STORAGE) || '[]'));
+      } catch {
+        cachedSearch = [];
+      }
+      try {
+        cachedPage = historyFromUnknown(JSON.parse(localStorage.getItem(PAGE_HISTORY_STORAGE) || '[]'));
+      } catch {
+        cachedPage = [];
+      }
       if (Array.isArray(settings.search_history) && settings.search_history.length) {
-        searchHistory = historyFromUnknown(settings.search_history);
+        searchHistory = historyFromUnknown(settings.search_history, cachedSearch);
       } else {
-        try {
-          searchHistory = historyFromUnknown(JSON.parse(localStorage.getItem(HISTORY_STORAGE) || '[]'));
-        } catch {
-          searchHistory = [];
-        }
+        searchHistory = cachedSearch;
       }
       if (Array.isArray(settings.page_search_history) && settings.page_search_history.length) {
-        pageHistory = historyFromUnknown(settings.page_search_history);
+        pageHistory = historyFromUnknown(settings.page_search_history, cachedPage);
       } else {
-        try {
-          pageHistory = historyFromUnknown(JSON.parse(localStorage.getItem(PAGE_HISTORY_STORAGE) || '[]'));
-        } catch {
-          pageHistory = [];
-        }
+        pageHistory = cachedPage;
       }
       projectsEpoch = Number(settings.projects_epoch || 0);
       await loadProjects();
@@ -348,6 +372,7 @@
   async function selectProject(slug: string) {
     menuOpen = false;
     error = null;
+    const switching = slug !== currentSlug;
     try {
       persistSessionProject(slug);
       currentSlug = slug;
@@ -356,7 +381,8 @@
       persistSessionProject(currentSlug);
       await loadProjects();
       await refreshRoots();
-      await refreshTree();
+      if (switching) clearSearch();
+      else await refreshTree();
       const last = proj.last_document;
       if (last) {
         selected = {
@@ -545,9 +571,14 @@
     void refreshTree();
   }
 
-  function pickHistory(term: string) {
+  function pickHistory(term: string, flags: unknown = {}) {
+    const f = searchFlagsFromUnknown(flags);
+    treeRegex = f.regex;
+    treeMatchCase = f.matchCase;
+    treeWholeWord = f.wholeWord;
     query = term;
     listQuery = term;
+    rememberSearch(term, f);
     searching = true;
     scheduleDocFind(true, 'list');
     void refreshTree();
@@ -558,8 +589,13 @@
     scheduleDocFind(true, 'list');
   }
 
-  function pickListHistory(term: string) {
+  function pickListHistory(term: string, flags: unknown = {}) {
+    const f = searchFlagsFromUnknown(flags);
+    treeRegex = f.regex;
+    treeMatchCase = f.matchCase;
+    treeWholeWord = f.wholeWord;
     listQuery = term;
+    rememberSearch(term, f);
     scheduleDocFind(true, 'list');
   }
 
@@ -568,8 +604,13 @@
     scheduleDocFind(false, 'page');
   }
 
-  function pickPageHistory(term: string) {
+  function pickPageHistory(term: string, flags: unknown = {}) {
+    const f = searchFlagsFromUnknown(flags);
+    pageRegex = f.regex;
+    pageMatchCase = f.matchCase;
+    pageWholeWord = f.wholeWord;
     pageQuery = term;
+    rememberPageSearch(term, f);
     scheduleDocFind(false, 'page');
   }
 
@@ -648,6 +689,10 @@
           else pageMatchCount = count;
         },
         () => gen !== docFindGen,
+        {
+          list: { regex: treeRegex, matchCase: treeMatchCase, wholeWord: treeWholeWord },
+          page: { regex: pageRegex, matchCase: pageMatchCase, wholeWord: pageWholeWord },
+        },
       );
     } catch {
       listMarks = [];
@@ -817,14 +862,6 @@
       if (folderDialog) folderDialog = false;
       if (projectDialog) projectDialog = null;
       menuOpen = false;
-      if (inField && target === pageFindInput) {
-        pageQuery = '';
-        runAllFinds(false);
-      }
-      if (inField && target?.closest('.list-find-field')) {
-        listQuery = '';
-        runAllFinds(true);
-      }
     }
   }
 
@@ -1090,6 +1127,24 @@
           onRemove={removeSearchHistory}
           onCommitHistory={rememberSearch}
           onSearch={commitTreeSearch}
+          regex={treeRegex}
+          matchCase={treeMatchCase}
+          wholeWord={treeWholeWord}
+          onRegexChange={(on) => {
+            treeRegex = on;
+            if (query.trim()) void commitTreeSearch();
+            else if (listQuery.trim()) commitListSearch();
+          }}
+          onMatchCaseChange={(on) => {
+            treeMatchCase = on;
+            if (query.trim()) void commitTreeSearch();
+            else if (listQuery.trim()) commitListSearch();
+          }}
+          onWholeWordChange={(on) => {
+            treeWholeWord = on;
+            if (query.trim()) void commitTreeSearch();
+            else if (listQuery.trim()) commitListSearch();
+          }}
         />
         {#if searching || appliedQuery}
           <div class="muted">
@@ -1164,6 +1219,9 @@
                 listFindNext();
               }}
             >
+              <span class="find-count">
+                {listMarks.length ? `${listIndex + 1} / ${listMarks.length}` : '0 / 0'}
+              </span>
               <SearchField
                 value={listQuery}
                 placeholder="From list search"
@@ -1177,16 +1235,27 @@
                 onRemove={removeSearchHistory}
                 onCommitHistory={rememberSearch}
                 onSearch={commitListSearch}
+                onNext={listFindNext}
+                onPrev={listFindPrev}
+                regex={treeRegex}
+                matchCase={treeMatchCase}
+                wholeWord={treeWholeWord}
+                onRegexChange={(on) => {
+                  treeRegex = on;
+                  if (query.trim()) void commitTreeSearch();
+                  else if (listQuery.trim()) commitListSearch();
+                }}
+                onMatchCaseChange={(on) => {
+                  treeMatchCase = on;
+                  if (query.trim()) void commitTreeSearch();
+                  else if (listQuery.trim()) commitListSearch();
+                }}
+                onWholeWordChange={(on) => {
+                  treeWholeWord = on;
+                  if (query.trim()) void commitTreeSearch();
+                  else if (listQuery.trim()) commitListSearch();
+                }}
               />
-              {#if listQuery.trim()}
-                <span class="find-count">
-                  {#if listFinding}
-                    {listMatchCount}
-                  {:else}
-                    {listMarks.length ? `${listIndex + 1} / ${listMarks.length}` : '0 / 0'}
-                  {/if}
-                </span>
-              {/if}
               <button class="btn-ghost btn-small" type="button" onclick={listFindPrev} disabled={!listMarks.length}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!listQuery.trim()}>Next</button>
             </form>
@@ -1210,19 +1279,30 @@
                 onRemove={removePageHistory}
                 onCommitHistory={rememberPageSearch}
                 onSearch={commitPageSearch}
+                onNext={pageFindNext}
+                onPrev={pageFindPrev}
+                regex={pageRegex}
+                matchCase={pageMatchCase}
+                wholeWord={pageWholeWord}
+                onRegexChange={(on) => {
+                  pageRegex = on;
+                  if (pageQuery.trim()) commitPageSearch();
+                }}
+                onMatchCaseChange={(on) => {
+                  pageMatchCase = on;
+                  if (pageQuery.trim()) commitPageSearch();
+                }}
+                onWholeWordChange={(on) => {
+                  pageWholeWord = on;
+                  if (pageQuery.trim()) commitPageSearch();
+                }}
                 bindInput={(el) => {
                   pageFindInput = el;
                 }}
               />
-              {#if pageQuery.trim()}
-                <span class="find-count">
-                  {#if pageFinding}
-                    {pageMatchCount}
-                  {:else}
-                    {pageMarks.length ? `${pageIndex + 1} / ${pageMarks.length}` : '0 / 0'}
-                  {/if}
-                </span>
-              {/if}
+              <span class="find-count">
+                {pageMarks.length ? `${pageIndex + 1} / ${pageMarks.length}` : '0 / 0'}
+              </span>
               <button class="btn-ghost btn-small" type="button" onclick={pageFindPrev} disabled={!pageMarks.length}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!pageQuery.trim()}>Next</button>
             </form>

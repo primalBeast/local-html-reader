@@ -18,9 +18,19 @@ def list_documents(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
     project: str | None = Query(default=None),
+    use_regex: bool = Query(default=False),
+    match_case: bool = Query(default=False),
+    whole_word: bool = Query(default=False),
 ) -> dict:
     try:
-        return documents.list_documents(query=q, root_id=root_id, project=project)
+        return documents.list_documents(
+            query=q,
+            root_id=root_id,
+            project=project,
+            regex=use_regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -32,9 +42,19 @@ def document_tree(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
     project: str | None = Query(default=None),
+    use_regex: bool = Query(default=False),
+    match_case: bool = Query(default=False),
+    whole_word: bool = Query(default=False),
 ) -> dict:
     try:
-        return documents.document_tree(query=q, root_id=root_id, project=project)
+        return documents.document_tree(
+            query=q,
+            root_id=root_id,
+            project=project,
+            regex=use_regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -46,12 +66,22 @@ def document_tree_stream(
     q: str | None = Query(default=None),
     root_id: str | None = Query(default=None),
     project: str | None = Query(default=None),
+    use_regex: bool = Query(default=False),
+    match_case: bool = Query(default=False),
+    whole_word: bool = Query(default=False),
 ):
     def events():
         hits: list = []
         try:
             yield f"event: progress\ndata: {json.dumps({'file_count': 0, 'truncated': False})}\n\n"
-            for hit in documents.iter_matching_html(query=q, root_id=root_id, project=project):
+            for hit in documents.iter_matching_html(
+                query=q,
+                root_id=root_id,
+                project=project,
+                regex=use_regex,
+                match_case=match_case,
+                whole_word=whole_word,
+            ):
                 hits.append(hit)
                 yield (
                     "event: progress\n"

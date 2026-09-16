@@ -30,6 +30,9 @@ HistoryBucket = Literal["search_history", "page_search_history"]
 class HistoryChange(BaseModel):
     bucket: HistoryBucket
     term: str = Field(min_length=1)
+    regex: bool = False
+    match_case: bool = False
+    whole_word: bool = False
 
 
 @router.get("")
@@ -48,7 +51,13 @@ async def update_settings(request: Request, project: str | None = Query(default=
 
 @router.post("/history")
 def post_history(body: HistoryChange) -> dict[str, Any]:
-    history = add_search_term(body.bucket, body.term)
+    history = add_search_term(
+        body.bucket,
+        body.term,
+        regex=body.regex,
+        match_case=body.match_case,
+        whole_word=body.whole_word,
+    )
     return {"bucket": body.bucket, "history": history}
 
 
