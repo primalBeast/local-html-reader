@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from lhr.branding import (
     APP_USER_MODEL_ID,
+    SPLASH_TITLE,
     assets_dir,
     icon_path,
+    splash_hta_path,
     splash_image_path,
-    splash_script_path,
 )
 
 
@@ -14,8 +15,12 @@ def test_branding_assets_exist():
     assert icon_path().is_file()
     assert icon_path().read_bytes()[:4] == b"\x00\x00\x01\x00"
     assert splash_image_path().is_file()
-    assert splash_script_path().is_file()
-    assert "LocalHtmlReader.SplashClose" in splash_script_path().read_text(encoding="utf-8")
+    hta = splash_hta_path()
+    assert hta.is_file()
+    text = hta.read_text(encoding="utf-8")
+    assert SPLASH_TITLE in text
+    assert "splash.png" in text
+    assert "lhr-splash.close" in text
     assert APP_USER_MODEL_ID == "primalBeast.LocalHtmlReader"
 
 

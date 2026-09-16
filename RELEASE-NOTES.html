@@ -113,6 +113,17 @@
 
       <article>
         <div class="row">
+          <h2>Splash shows on locked-down Windows</h2>
+          <span class="chip">unreleased</span>
+          <span class="date">2026-09-16</span>
+        </div>
+        <ul>
+          <li>The startup splash is an HTA opened with <code>mshta</code>, not a hidden PowerShell script. Corporate PCs often block <code>.ps1</code> even with <code>-ExecutionPolicy Bypass</code>, and starting PowerShell hidden can hide the splash window too.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>App icon, startup splash, and WebView launch fix</h2>
           <span class="chip">0f31065</span>
           <span class="date">2026-09-16</span>

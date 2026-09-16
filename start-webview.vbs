@@ -6,9 +6,9 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 dir = fso.GetParentFolderName(WScript.ScriptFullName)
 sh.CurrentDirectory = dir
-splash = dir & "\lhr\assets\show-splash.ps1"
+splash = dir & "\lhr\assets\splash.hta"
 If fso.FileExists(splash) Then
-  sh.Run "powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & splash & """", 0, False
+  sh.Run "mshta.exe """ & splash & """", 1, False
 End If
 cmd = "cmd.exe /c """ & dir & "\start-webview.cmd"""
 rc = sh.Run(cmd, 7, True)
