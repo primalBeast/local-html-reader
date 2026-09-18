@@ -1,4 +1,4 @@
-"""Plain-text extraction for search: HTML, Markdown, and PDF."""
+"""Plain-text extraction for search: HTML, Markdown, PDF, and Word."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ logger = logging.getLogger("lhr.extract")
 HTML_SUFFIXES = {".html", ".htm"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 PDF_SUFFIXES = {".pdf"}
-DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES
+DOCX_SUFFIXES = {".docx", ".dotx"}
+DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES | DOCX_SUFFIXES
 
 
 def text_matches_query(
@@ -86,6 +87,8 @@ def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int 
             return ""
     if suffix in PDF_SUFFIXES:
         return _pdf_text(path, max_bytes=max_bytes)
+    if suffix in DOCX_SUFFIXES:
+        return _docx_text(path, max_bytes=max_bytes)
     return ""
 
 
@@ -124,4 +127,23 @@ def _pdf_text(path: Path, *, max_bytes: int) -> str:
         return "\n".join(parts)
     except Exception:
         logger.debug("PDF extract failed for %s", path, exc_info=True)
+        return ""
+
+
+def _docx_text(path: Path, *, max_bytes: int) -> str:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    if size > max_bytes:
+        return ""
+    try:
+        import mammoth
+    except ImportError:
+        return ""
+    try:
+        with path.open("rb") as fh:
+            return mammoth.extract_raw_text(fh).value or ""
+    except Exception:
+        logger.debug("DOCX extract failed for %s", path, exc_info=True)
         return ""

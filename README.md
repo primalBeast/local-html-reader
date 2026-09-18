@@ -1,6 +1,6 @@
 # Local HTML Reader
 
-A local-first web app for reading HTML, Markdown, and PDF documents that already live
+A local-first web app for reading HTML, Markdown, PDF, and Word (.docx) documents that already live
 on your hard drive. **No cloud, no upload, no account** — you group folders into
 projects, and you read them in the browser or a WebView2 window.
 
@@ -58,7 +58,7 @@ uv run lhr doctor
 ### First run
 
 Create a project from the top-left menu, then **+ Add folder…** and paste an absolute
-Windows path. The left pane lists `.html` / `.htm` / `.md` / `.pdf` files in enabled
+Windows path. The left pane lists `.html` / `.htm` / `.md` / `.pdf` / `.docx` files in enabled
 folders. Click a file to open it in the right pane.
 
 Left search filters files whose **contents** match. Right-pane **Find in page** searches

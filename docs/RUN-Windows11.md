@@ -171,7 +171,7 @@ uv run lhr serve --webview
 
 ## 6. First-run behavior
 
-On first start the app has **no project folders**. Create a project from the top-left menu, then **+ Add folder…** and paste an absolute Windows path (for example `D:\Notes\html`). The left pane shows that folder tree (`.html` / `.htm` / `.md` / `.pdf`). Click a file to open it in the larger right pane.
+On first start the app has **no project folders**. Create a project from the top-left menu, then **+ Add folder…** and paste an absolute Windows path (for example `D:\Notes\html`). The left pane shows that folder tree (`.html` / `.htm` / `.md` / `.pdf` / `.docx`). Click a file to open it in the larger right pane.
 
 The left search box looks **inside** those files and hides files that do not contain the text. The right-pane **Find in page** box searches only the open document (Ctrl+F).
 

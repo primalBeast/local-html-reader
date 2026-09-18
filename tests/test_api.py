@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_extract import docx_bytes_with_text
+
 
 @pytest.fixture()
 def docs_tree(tmp_path: Path) -> dict[str, Path]:
@@ -231,6 +233,24 @@ def test_lists_and_searches_markdown_and_pdf(client: TestClient, docs_tree: dict
     assert "application/pdf" in pdf_view.headers.get("content-type", "")
     assert "attachment" not in (pdf_view.headers.get("content-disposition") or "").lower()
     assert pdf_view.content.startswith(b"%PDF")
+
+
+def test_lists_searches_and_views_docx(client: TestClient, docs_tree: dict[str, Path]):
+    (docs_tree["root"] / "brief.docx").write_bytes(docx_bytes_with_text("DOCXUNIQUETOKEN in Word"))
+    added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    assert added.status_code == 200, added.text
+    root_id = added.json()["id"]
+    rels = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert "brief.docx" in rels
+    hits = client.get("/api/documents", params={"q": "DOCXUNIQUETOKEN"}).json()["documents"]
+    assert {d["rel"] for d in hits} == {"brief.docx"}
+    rx = client.get("/api/documents", params={"q": "DOCXUNIQUE.*", "use_regex": True}).json()["documents"]
+    assert {d["rel"] for d in rx} == {"brief.docx"}
+    viewed = client.get(f"/view/{root_id}/brief.docx")
+    assert viewed.status_code == 200
+    assert "text/html" in viewed.headers.get("content-type", "")
+    assert "DOCXUNIQUETOKEN" in viewed.text
+    assert "attachment" not in (viewed.headers.get("content-disposition") or "").lower()
 
 
 def test_list_and_view_html_under_root(client: TestClient, docs_tree: dict[str, Path]):

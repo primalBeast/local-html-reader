@@ -158,6 +158,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cobble"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/7a/a507c709be2c96e1bb6102eb7b7f4026c5e5e223ef7d745a17d239e9d844/cobble-0.1.4.tar.gz", hash = "sha256:de38be1539992c8a06e569630717c485a5f91be2192c461ea2b220607dfa78aa", size = 3805, upload-time = "2024-06-01T18:11:09.528Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/e1/3714a2f371985215c219c2a70953d38e3eed81ef165aed061d21de0e998b/cobble-0.1.4-py3-none-any.whl", hash = "sha256:36c91b1655e599fd428e2b95fdd5f0da1ca2e9f1abb0bc871dec21a0e78a2b44", size = 3984, upload-time = "2024-06-01T18:11:07.911Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -330,6 +339,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "mammoth" },
     { name = "markdown" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -355,6 +365,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50.0.1" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "mammoth", specifier = ">=1.12.2" },
     { name = "markdown", specifier = ">=3.7" },
     { name = "pydantic", specifier = ">=2.9.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
@@ -369,6 +380,18 @@ provides-extras = ["dev"]
 dev = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", specifier = ">=8.0.0" },
+]
+
+[[package]]
+name = "mammoth"
+version = "1.12.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cobble" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/bc/0c1108719bc7ad10064ac11fe0c4b663accc1fe7c8a1f6b8c5be6771cb8c/mammoth-1.12.2.tar.gz", hash = "sha256:32c9153105e54c7a9b560e7a35d1923bc27cc1ac292d2b46a929258746cc91bc", size = 53871, upload-time = "2026-09-12T09:15:21.005Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/37/a705d2a75337ec2b4e1bf581eac0e469f26d504964ea67870b0f1cfef4a1/mammoth-1.12.2-py2.py3-none-any.whl", hash = "sha256:8a579a28c8361a751e085634e65c9c6489d0319120d1e0448ef9fd09ed29b0fa", size = 55162, upload-time = "2026-09-12T09:15:19.74Z" },
 ]
 
 [[package]]

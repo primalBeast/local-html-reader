@@ -1,10 +1,45 @@
 from io import BytesIO
 from pathlib import Path
+from xml.sax.saxutils import escape
+from zipfile import ZipFile
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from lhr.extract import extract_search_text, text_matches_query
+
+
+def docx_bytes_with_text(text: str) -> bytes:
+    body = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>"
+        f"{escape(text)}"
+        "</w:t></w:r></w:p></w:body></w:document>"
+    )
+    types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+    buf = BytesIO()
+    with ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", body)
+    return buf.getvalue()
 
 
 def test_text_matches_ignores_pdf_glyph_spacing() -> None:
@@ -54,3 +89,11 @@ def test_extracts_text_from_aes_encrypted_pdf(tmp_path: Path) -> None:
     text = extract_search_text(path)
     assert "PDFUNIQUETOKEN" in text
     assert text_matches_query(text, "pdfuniquetoken")
+
+
+def test_extracts_text_from_docx(tmp_path: Path) -> None:
+    path = tmp_path / "note.docx"
+    path.write_bytes(docx_bytes_with_text("DOCXUNIQUETOKEN in the body"))
+    text = extract_search_text(path)
+    assert "DOCXUNIQUETOKEN" in text
+    assert text_matches_query(text, "docxuniquetoken")

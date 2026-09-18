@@ -134,6 +134,11 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
             raise HTTPException(status_code=404, detail="file not found") from exc
         return HTMLResponse(markdown_to_html_page(path.name, raw))
 
+    if suffix in {".docx", ".dotx"}:
+        from lhr.docx_view import docx_to_html_page
+
+        return HTMLResponse(docx_to_html_page(path.name, path))
+
     media, _enc = mimetypes.guess_type(str(path))
     if suffix in {".html", ".htm"}:
         # No filename= — Edge blocks iframe documents with Content-Disposition filename
