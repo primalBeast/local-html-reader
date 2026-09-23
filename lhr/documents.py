@@ -158,10 +158,27 @@ def _file_matches_query(
 ) -> bool:
     if not needle:
         return True
+    from lhr.text_index import lookup_text, schedule_save
+
+    cached = lookup_text(path)
+    if cached is not None:
+        return text_matches_query(
+            cached,
+            needle,
+            regex=regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
     if not regex and not literal_might_match(path, needle, match_case=match_case):
         return False
-    return _content_contains(
-        path, needle, root=root, regex=regex, match_case=match_case, whole_word=whole_word
+    text = extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES)
+    schedule_save(path, text)
+    return text_matches_query(
+        text,
+        needle,
+        regex=regex,
+        match_case=match_case,
+        whole_word=whole_word,
     )
 
 
@@ -288,6 +305,32 @@ def iter_search_activity(
     whole_word: bool = False,
 ):
     """Yield ("hit", hit) and ("workers", rows) while search threads run."""
+    from lhr.text_index import set_searching
+
+    set_searching(True)
+    try:
+        yield from _iter_search_activity(
+            query=query,
+            root_id=root_id,
+            limit=limit,
+            project=project,
+            regex=regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
+    finally:
+        set_searching(False)
+
+
+def _iter_search_activity(
+    query: str | None = None,
+    root_id: str | None = None,
+    limit: int = MAX_LIST,
+    project: str | None = None,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+):
     needle = (query or "").strip()
     records = _root_records(project=project)
     if root_id:

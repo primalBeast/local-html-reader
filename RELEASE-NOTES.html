@@ -113,6 +113,19 @@
 
       <article>
         <div class="row">
+          <h2>Background text cache for left-pane search</h2>
+          <span class="chip">unreleased</span>
+          <span class="date">2026-09-23</span>
+        </div>
+        <ul>
+          <li>Visible text from HTML, Markdown, PDF, and Word files is saved in the background under the app data folder <code>text-index</code>, not next to the documents.</li>
+          <li>Each entry stores the original file’s size, modified time, and SHA-256 checksum. Left-pane search reads the cache when the file is unchanged, and re-reads the document when it is not. Files up to 2 MB are checksum-checked on lookup. Larger files are compared by size and modified time so a search does not hash them again.</li>
+          <li>Indexing runs one file at a time and pauses while a search is in progress.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Faster search, live matches, and file sizes</h2>
           <span class="chip">0cba952</span>
           <span class="date">2026-09-17</span>

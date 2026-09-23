@@ -94,6 +94,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     app = create_app()
     logging.getLogger("lhr").info("Local HTML Reader v%s — %s", __version__, url)
     logging.getLogger("lhr").info("Data directory: %s", cfg.data_dir)
+    try:
+        from lhr.text_index import start_background_indexer
+
+        start_background_indexer()
+    except Exception:
+        logging.getLogger("lhr").exception("Text index did not start")
 
     if use_webview and cfg.open_browser:
         logging.getLogger("lhr").info("Ignoring --open because --webview was set")
