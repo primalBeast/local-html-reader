@@ -235,6 +235,20 @@ def test_lists_and_searches_markdown_and_pdf(client: TestClient, docs_tree: dict
     assert pdf_view.content.startswith(b"%PDF")
 
 
+def test_search_finds_text_split_across_tags(client: TestClient, docs_tree: dict[str, Path]):
+    (docs_tree["root"] / "split.html").write_text(
+        "<html><body><p>65C<b>0138E</b></p></body></html>",
+        encoding="utf-8",
+    )
+    (docs_tree["root"] / "script.html").write_text(
+        "<html><body><script>65C0138E</script><p>other</p></body></html>",
+        encoding="utf-8",
+    )
+    client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    hits = client.get("/api/documents", params={"q": "65C0138E"}).json()["documents"]
+    assert {d["rel"] for d in hits} == {"split.html"}
+
+
 def test_lists_searches_and_views_docx(client: TestClient, docs_tree: dict[str, Path]):
     (docs_tree["root"] / "brief.docx").write_bytes(docx_bytes_with_text("DOCXUNIQUETOKEN in Word"))
     added = client.post("/api/roots", json={"path": str(docs_tree["root"])})

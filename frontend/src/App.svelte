@@ -4,7 +4,7 @@
   import SearchField from './lib/SearchField.svelte';
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
-  import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type Settings, type TreeNode } from './lib/api';
+  import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type SearchWorker, type Settings, type TreeNode } from './lib/api';
   import PdfViewer from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
@@ -18,6 +18,7 @@
   let projectsEpoch = $state(0);
   let tree = $state<TreeNode[]>([]);
   let fileCount = $state(0);
+  let searchWorkers = $state<SearchWorker[]>([]);
   let truncated = $state(false);
   let query = $state('');
   let treeRegex = $state(false);
@@ -31,6 +32,8 @@
   let searchHistory = $state<SearchHistoryItem[]>([]);
   let pageHistory = $state<SearchHistoryItem[]>([]);
   let selected = $state<DocumentHit | null>(null);
+  let openingKey = $state<string | null>(null);
+  let loadedKey = $state<string | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let version = $state('');
@@ -55,11 +58,15 @@
   let listMarks = $state<HTMLElement[]>([]);
   let listIndex = $state(0);
   let listFinding = $state(false);
+  let listFindParallel = $state(false);
+  let listFindThreads = $state(0);
   let listMatchCount = $state(0);
   let pageQuery = $state('');
   let pageMarks = $state<HTMLElement[]>([]);
   let pageIndex = $state(0);
   let pageFinding = $state(false);
+  let pageFindParallel = $state(false);
+  let pageFindThreads = $state(0);
   let pageMatchCount = $state(0);
   let pageFindInput = $state<HTMLInputElement | null>(null);
 
@@ -223,10 +230,8 @@
       pageHistory = nextPage;
       cacheHistory(PAGE_HISTORY_STORAGE, nextPage);
     }
-    const incoming = (s.roots || []).map((r) => `${r.id}\t${r.path}`).join('\n');
-    const current = roots.map((r) => `${r.id}\t${r.path}`).join('\n');
     const epoch = Number(s.projects_epoch || 0);
-    if (epoch !== projectsEpoch || incoming !== current) {
+    if (epoch !== projectsEpoch) {
       projectsEpoch = epoch;
       void loadProjects()
         .then(() => refreshRoots())
@@ -236,6 +241,12 @@
 
   let treeAbort: AbortController | null = null;
 
+  function formatMb(bytes: number | undefined): string {
+    const mb = (bytes ?? 0) / (1024 * 1024);
+    if (mb < 1) return `${mb.toFixed(1)} MB`;
+    return `${Math.round(mb)} MB`;
+  }
+
   async function refreshTree() {
     const q = query.trim();
     appliedQuery = q;
@@ -244,7 +255,14 @@
     treeAbort = new AbortController();
     const signal = treeAbort.signal;
     searching = Boolean(q);
-    if (q) fileCount = 0;
+    if (q) {
+      fileCount = 0;
+      tree = [];
+      truncated = false;
+      searchWorkers = [];
+    } else {
+      searchWorkers = [];
+    }
     try {
       if (!q) {
         const data = await api.tree();
@@ -256,8 +274,13 @@
       }
       const data = await api.treeStream(
         q,
-        (n) => {
-          if (gen === searchGen) fileCount = n;
+        (n, nextTree, workers) => {
+          if (gen !== searchGen) return;
+          fileCount = n;
+          if (nextTree) tree = nextTree;
+          if (workers) {
+            searchWorkers = [...workers].sort((a, b) => b.size - a.size || a.slot - b.slot);
+          }
         },
         signal,
         { regex: treeRegex, matchCase: treeMatchCase, wholeWord: treeWholeWord },
@@ -270,7 +293,10 @@
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (gen === searchGen) error = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === searchGen) searching = false;
+      if (gen === searchGen) {
+        searching = false;
+        searchWorkers = [];
+      }
     }
   }
 
@@ -315,17 +341,6 @@
       await loadProjects();
       await refreshRoots();
       await refreshTree();
-      const last = settings.last_document;
-      if (last) {
-        selected = {
-          root_id: last.root_id,
-          root_path: roots.find((r) => r.id === last.root_id)?.path || '',
-          rel: last.rel,
-          name: last.rel.split('/').pop() || last.rel,
-          size: 0,
-          mtime: 0,
-        };
-      }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -385,16 +400,18 @@
       else await refreshTree();
       const last = proj.last_document;
       if (last) {
-        selected = {
+        await openDoc({
           root_id: last.root_id,
           root_path: (proj.folders || []).find((f) => f.id === last.root_id)?.path || '',
           rel: last.rel,
           name: last.rel.split('/').pop() || last.rel,
           size: 0,
           mtime: 0,
-        };
+        });
       } else {
         selected = null;
+        loadedKey = null;
+        openingKey = null;
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -439,7 +456,11 @@
     try {
       await api.deleteProject(slug);
       menuOpen = false;
-      if (slug === currentSlug) selected = null;
+      if (slug === currentSlug) {
+        selected = null;
+        loadedKey = null;
+        openingKey = null;
+      }
       await loadProjects();
       await refreshRoots();
       await refreshTree();
@@ -473,7 +494,11 @@
     error = null;
     try {
       await api.removeRoot(id);
-      if (selected?.root_id === id) selected = null;
+      if (selected?.root_id === id) {
+        selected = null;
+        loadedKey = null;
+        openingKey = null;
+      }
       await loadProjects();
       await refreshRoots();
       await refreshTree();
@@ -483,6 +508,9 @@
   }
 
   async function openDoc(doc: DocumentHit) {
+    const key = docKey(doc);
+    if (loadedKey === key || openingKey === key) return;
+    openingKey = key;
     const fromHtml = selected && !isPdfHit(selected);
     if (isPdfHit(doc) && fromHtml) heldHtml = selected;
     else if (!isPdfHit(doc)) heldHtml = null;
@@ -555,8 +583,13 @@
 
   function commitTreeSearch(value?: string) {
     if (typeof value === 'string') query = value;
+    const next = query.trim();
+    if (next === appliedQuery) {
+      listQuery = query;
+      return;
+    }
     listQuery = query;
-    searching = Boolean(query.trim());
+    searching = Boolean(next);
     scheduleDocFind(true, 'list');
     void refreshTree();
   }
@@ -626,6 +659,16 @@
     return Boolean(doc?.rel?.toLowerCase().endsWith('.pdf'));
   }
 
+  function docKey(doc: { root_id: string; rel: string } | null): string {
+    return doc ? `${doc.root_id}:${doc.rel}` : '';
+  }
+
+  function clearOpening(doc: { root_id: string; rel: string } | null) {
+    if (!doc || openingKey !== docKey(doc)) return;
+    openingKey = null;
+    loadedKey = docKey(doc);
+  }
+
   function findRoot(): Document | HTMLElement | null {
     if (isPdfHit(selected)) {
       if (pdfRootEl?.isConnected) return pdfRootEl;
@@ -648,18 +691,29 @@
 
   async function loadHtmlFrame(doc: DocumentHit, el: HTMLIFrameElement) {
     const url = viewUrl(doc.root_id, doc.rel);
+    const key = docKey(doc);
+    delete el.dataset.readyKey;
     try {
       const res = await fetch(url, { headers: { Accept: 'text/html,*/*' } });
+      if (openingKey !== key) return;
+      el.dataset.readyKey = key;
       if (!res.ok) {
         el.src = url;
         return;
       }
       const html = await res.text();
+      if (openingKey !== key) return;
       el.removeAttribute('sandbox');
       el.removeAttribute('src');
       el.srcdoc = withBaseHref(html, url);
     } catch {
-      el.src = url;
+      if (openingKey !== key) return;
+      try {
+        el.dataset.readyKey = key;
+        el.src = url;
+      } catch {
+        clearOpening(doc);
+      }
     }
   }
 
@@ -692,6 +746,17 @@
         {
           list: { regex: treeRegex, matchCase: treeMatchCase, wholeWord: treeWholeWord },
           page: { regex: pageRegex, matchCase: pageMatchCase, wholeWord: pageWholeWord },
+          byteSize: selected?.size ?? 0,
+        },
+        (layer, parallel) => {
+          if (gen !== docFindGen) return;
+          if (layer === 'list') listFindParallel = parallel;
+          else pageFindParallel = parallel;
+        },
+        (layer, count) => {
+          if (gen !== docFindGen) return;
+          if (layer === 'list') listFindThreads = count;
+          else pageFindThreads = count;
         },
       );
     } catch {
@@ -726,10 +791,14 @@
     const gen = ++docFindGen;
     if (which === 'list' || which === 'both') {
       listFinding = Boolean(listQuery.trim());
+      listFindParallel = false;
+      listFindThreads = 0;
       listMatchCount = 0;
     }
     if (which === 'page' || which === 'both') {
       pageFinding = Boolean(pageQuery.trim());
+      pageFindParallel = false;
+      pageFindThreads = 0;
       pageMatchCount = 0;
     }
     clearTimeout(docFindTimer);
@@ -738,6 +807,10 @@
         if (gen !== docFindGen) return;
         listFinding = false;
         pageFinding = false;
+        listFindParallel = false;
+        pageFindParallel = false;
+        listFindThreads = 0;
+        pageFindThreads = 0;
       });
     };
     if (!listQuery.trim() && !pageQuery.trim()) {
@@ -798,6 +871,10 @@
   }
 
   function onIframeLoad() {
+    const readyKey = iframeEl?.dataset.readyKey;
+    if (selected && !isPdfHit(selected) && readyKey && readyKey === docKey(selected)) {
+      clearOpening(selected);
+    }
     iframeCopyCleanup?.();
     iframeCopyCleanup = null;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
@@ -838,7 +915,18 @@
   function onPdfReady(root: HTMLElement) {
     pdfRootEl = root;
     heldHtml = null;
+    if (selected && isPdfHit(selected)) {
+      loadedKey = docKey(selected);
+      if (openingKey === loadedKey) openingKey = null;
+    }
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
+  }
+
+  function onPdfSettled(src: string) {
+    if (!selected || !isPdfHit(selected)) return;
+    if (viewUrl(selected.root_id, selected.rel) !== src) return;
+    if (loadedKey === docKey(selected)) return;
+    if (openingKey === docKey(selected)) openingKey = null;
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -1121,6 +1209,8 @@
           ariaLabel="Search documents by text"
           history={searchHistory}
           searching={searching}
+          parallel={searchWorkers.length > 1}
+          threadCount={searchWorkers.length}
           onInput={onTreeType}
           onClear={clearSearch}
           onPick={pickHistory}
@@ -1170,7 +1260,9 @@
           </div>
         {:else if tree.length === 0}
           <div class="empty">
-            {#if appliedQuery}
+            {#if searching}
+              Searching…
+            {:else if appliedQuery}
               No HTML files contain that text.
             {:else}
               No HTML, PDF, or Markdown files in the enabled folders.
@@ -1180,11 +1272,23 @@
           <Tree
             nodes={tree}
             {selected}
+            {openingKey}
             onOpen={openDoc}
             onPathMenu={(e, node) => openPathMenu(e, node.root_path, node.rel)}
           />
         {/if}
       </div>
+      {#if searching && searchWorkers.length}
+        <ol class="search-workers">
+          {#each searchWorkers as worker (worker.slot)}
+            <li>
+              <span class="search-worker-n">{worker.slot}.</span>
+              <span class="search-worker-name" title={worker.name}>{worker.name}</span>
+              <span class="search-worker-size">{formatMb(worker.size)}</span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
     </section>
 
     <button
@@ -1228,6 +1332,8 @@
                 ariaLabel="Search this page for the document-list search term"
                 history={searchHistory}
                 searching={listFinding}
+                parallel={listFindParallel}
+                threadCount={listFindThreads}
                 extraClass="list-find-field"
                 onInput={onListType}
                 onClear={clearListFind}
@@ -1272,6 +1378,8 @@
                 ariaLabel="Find in the open document"
                 history={pageHistory}
                 searching={pageFinding}
+                parallel={pageFindParallel}
+                threadCount={pageFindThreads}
                 extraClass="page-find-field"
                 onInput={onPageType}
                 onClear={clearPageFind}
@@ -1325,6 +1433,7 @@
               src={viewUrl(selected.root_id, selected.rel)}
               overlay={Boolean(heldHtml)}
               onReady={onPdfReady}
+              onSettled={onPdfSettled}
             />
           {/if}
         </div>

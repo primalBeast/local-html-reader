@@ -4,11 +4,13 @@
   let {
     nodes,
     selected,
+    openingKey = null,
     onOpen,
     onPathMenu,
   }: {
     nodes: TreeNode[];
     selected: DocumentHit | null;
+    openingKey?: string | null;
     onOpen: (doc: DocumentHit) => void;
     onPathMenu?: (event: MouseEvent, node: TreeNode) => void;
   } = $props();
@@ -139,6 +141,12 @@
     onOpen(nodeToHit(node));
     treeEl?.focus({ preventScroll: true });
   }
+
+  function formatMb(bytes: number | undefined): string {
+    const mb = (bytes ?? 0) / (1024 * 1024);
+    if (mb < 1) return `${mb.toFixed(1)} MB`;
+    return `${Math.round(mb)} MB`;
+  }
 </script>
 
 {#snippet branch(items: TreeNode[], depth: number)}
@@ -169,9 +177,13 @@
         style={`padding-left: ${24 + depth * 14}px`}
         onclick={() => openFile(node)}
         oncontextmenu={(e) => onPathMenu?.(e, node)}
-        title={node.rel}
+        title={`${node.rel} (${formatMb(node.size)})`}
       >
-        {node.name}
+        <span class="file-name">{node.name}</span>
+        {#if openingKey === `${node.root_id}:${node.rel}`}
+          <span class="file-open-spinner" role="status" aria-label="Loading file"></span>
+        {/if}
+        <span class="file-size">{formatMb(node.size)}</span>
       </button>
     {/if}
   {/each}

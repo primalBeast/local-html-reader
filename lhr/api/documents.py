@@ -73,8 +73,7 @@ def document_tree_stream(
     def events():
         hits: list = []
         try:
-            yield f"event: progress\ndata: {json.dumps({'file_count': 0, 'truncated': False})}\n\n"
-            for hit in documents.iter_matching_html(
+            for kind, payload in documents.iter_search_activity(
                 query=q,
                 root_id=root_id,
                 project=project,
@@ -82,17 +81,27 @@ def document_tree_stream(
                 match_case=match_case,
                 whole_word=whole_word,
             ):
-                hits.append(hit)
-                yield (
-                    "event: progress\n"
-                    f"data: {json.dumps({'file_count': len(hits), 'truncated': False})}\n\n"
-                )
+                if kind == "hit":
+                    hits.append(payload)
+                    data = {
+                        "file_count": len(hits),
+                        "truncated": False,
+                        "tree": documents.tree_from_hits(hits),
+                    }
+                else:
+                    data = {
+                        "file_count": len(hits),
+                        "truncated": False,
+                        "workers": payload,
+                    }
+                yield f"event: progress\ndata: {json.dumps(data)}\n\n"
             hits.sort(key=lambda h: (h["root_path"].lower(), h["rel"].lower()))
             payload = {
                 "tree": documents.tree_from_hits(hits),
                 "file_count": len(hits),
                 "truncated": len(hits) >= documents.MAX_LIST,
                 "query": (q or "").strip(),
+                "workers": [],
             }
             yield f"event: done\ndata: {json.dumps(payload)}\n\n"
         except (KeyError, FileNotFoundError, ValueError) as exc:

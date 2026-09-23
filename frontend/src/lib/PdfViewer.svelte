@@ -7,10 +7,12 @@
     src,
     overlay = false,
     onReady,
+    onSettled,
   }: {
     src: string;
     overlay?: boolean;
     onReady?: (root: HTMLElement) => void;
+    onSettled?: (src: string) => void;
   } = $props();
 
   let frame = $state<HTMLDivElement | null>(null);
@@ -27,6 +29,7 @@
 
   onMount(() => {
     let cancelled = false;
+    let activeUrl = '';
     const lifetime: Array<{ destroy?: () => void; cancel?: () => void }> = [];
     let pageTasks: Array<{ destroy?: () => void; cancel?: () => void }> = [];
     const blobUrls: string[] = [];
@@ -137,7 +140,7 @@
       scrollKeepCentered(prevVW, prevVH, Math.max(viewW, nextVW), nextVH);
     }
 
-    async function paintPages() {
+    async function paintPages(loadedUrl: string) {
       const pdfjs = pdfjsMod;
       const pdf = pdfDoc;
       const root = host;
@@ -234,6 +237,7 @@
           requestAnimationFrame(() => {
             if (cancelled || gen !== paintGen) return;
             onReady?.(root);
+            onSettled?.(loadedUrl);
           });
         });
       } catch (e) {
@@ -241,6 +245,7 @@
         if (first) {
           loading = false;
           error = e instanceof Error ? e.message : String(e);
+          onSettled?.(loadedUrl);
         }
       }
     }
@@ -248,7 +253,7 @@
     function schedulePaint() {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
-        void paintPages();
+        void paintPages(activeUrl);
       }, 220);
     }
 
@@ -278,6 +283,7 @@
     }
 
     loadUrl = async (url: string) => {
+      activeUrl = url;
       const gen = ++loadGen;
       error = null;
       loading = true;
@@ -308,7 +314,7 @@
         }
         lastWidth = 0;
         paintedScale = 0;
-        await paintPages();
+        await paintPages(url);
         if (cancelled || gen !== loadGen) return;
         loading = false;
         if (frame) frame.scrollTop = 0;
@@ -323,6 +329,7 @@
         if (!host?.childElementCount) {
           error = e instanceof Error ? e.message : String(e);
         }
+        onSettled?.(url);
       }
     };
 

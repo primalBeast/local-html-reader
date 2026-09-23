@@ -255,38 +255,110 @@ function yieldUi(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-type TextHit = { start: number; end: number };
-
-export type FindFlags = { regex?: boolean; matchCase?: boolean; wholeWord?: boolean };
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function paintFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
-function hitsInText(text: string, query: string, flags: FindFlags): TextHit[] {
-  const hits: TextHit[] = [];
-  const q = query.trim();
-  if (!q) return hits;
-  let source = flags.regex ? q : escapeRegExp(q);
-  if (flags.wholeWord) {
-    source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;
+import { hitsInText, textSlices, workerCountFor, type FindFlags, type TextHit } from './findMatch';
+
+export type { FindFlags };
+
+let findPool: Worker[] | null = null;
+let findJobId = 0;
+
+function findWorkers(): Worker[] {
+  if (findPool) return findPool;
+  const n = Math.max(1, (navigator.hardwareConcurrency || 8) - 1);
+  findPool = Array.from(
+    { length: n },
+    () => new Worker(new URL('./findWorker.ts', import.meta.url), { type: 'module' }),
+  );
+  return findPool;
+}
+
+function searchText(
+  text: string,
+  query: string,
+  flags: FindFlags,
+  onActive?: (count: number) => void,
+): Promise<TextHit[]> {
+  const parts = workerCountFor(text.length);
+  if (parts <= 1) {
+    onActive?.(1);
+    const hits = hitsInText(text, query, flags);
+    onActive?.(0);
+    return Promise.resolve(hits);
   }
-  let re: RegExp;
-  try {
-    re = new RegExp(source, `${flags.matchCase ? '' : 'i'}gu`);
-  } catch {
-    return hits;
-  }
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    if (!match[0].length) {
-      re.lastIndex += 1;
-      continue;
+  const pad = Math.min(4096, Math.max(query.length + 32, 128));
+  const slices = textSlices(text.length, parts, pad);
+  const pool = findWorkers();
+  const id = ++findJobId;
+  return new Promise((resolve) => {
+    const hits: TextHit[] = [];
+    let pending = slices.length;
+    let settled = false;
+    const inflight = new Map<Worker, number>();
+    let active = 0;
+    const bump = (worker: Worker, delta: number) => {
+      const prev = inflight.get(worker) || 0;
+      const next = prev + delta;
+      inflight.set(worker, next);
+      if (prev === 0 && next > 0) active += 1;
+      else if (prev > 0 && next === 0) active -= 1;
+      onActive?.(active);
+    };
+    const finish = (found: TextHit[]) => {
+      if (settled) return;
+      settled = true;
+      for (const worker of pool) {
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      }
+      onActive?.(0);
+      found.sort((a, b) => a.start - b.start);
+      resolve(found.slice(0, 8000));
+    };
+    const onError = () => finish(hitsInText(text, query, flags));
+    const onMessage = (event: MessageEvent<{ id: number; hits: TextHit[] }>) => {
+      if (event.data.id !== id) return;
+      bump(event.currentTarget as Worker, -1);
+      hits.push(...event.data.hits);
+      pending -= 1;
+      if (pending > 0) return;
+      finish(hits);
+    };
+    for (const worker of pool) {
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
     }
-    hits.push({ start: match.index, end: match.index + match[0].length });
-    if (hits.length >= 8000) break;
+    slices.forEach((slice, index) => {
+      const worker = pool[index % pool.length];
+      bump(worker, 1);
+      worker.postMessage({
+        id,
+        text: text.slice(slice.sliceFrom, slice.sliceTo),
+        query,
+        flags,
+        from: slice.from,
+        to: slice.to,
+        sliceFrom: slice.sliceFrom,
+      });
+    });
+  });
+}
+
+function spanIndexAt(spans: NodeSpan[], offset: number): number {
+  let lo = 0;
+  let hi = spans.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid].to <= offset) lo = mid + 1;
+    else if (spans[mid].from > offset) hi = mid - 1;
+    else return mid;
   }
-  return hits;
+  return Math.min(lo, spans.length - 1);
 }
 
 async function wrapMatches(
@@ -296,15 +368,54 @@ async function wrapMatches(
   onCount?: (n: number) => void,
   cancelled?: () => boolean,
   flags: FindFlags = {},
+  onParallel?: (parallel: boolean) => void,
+  onActive?: (count: number) => void,
+  byteSize = 0,
 ): Promise<HTMLElement[]> {
   const q = query.trim();
   if (!q) return [];
-  const nodes = collectTextNodes(root);
+  if (byteSize >= 512 * 1024) {
+    onParallel?.(true);
+    await paintFrame();
+  }
+  const nodes: Text[] = [];
+  const originals: string[] = [];
+  const walker = ownerDoc(root).createTreeWalker(queryScope(root), NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = (node as Text).parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      const tag = parent.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA') {
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (parent.closest('script, style, noscript, textarea')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  let chars = 0;
+  let lastCollect = performance.now();
+  let toldParallel = byteSize >= 512 * 1024;
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const text = node.textContent || '';
+    nodes.push(node);
+    originals.push(text);
+    chars += text.length;
+    if (!toldParallel && (chars >= 80_000 || nodes.length >= 4000)) {
+      toldParallel = true;
+      onParallel?.(true);
+      await paintFrame();
+      lastCollect = performance.now();
+    } else if (performance.now() - lastCollect > 24) {
+      await yieldUi();
+      lastCollect = performance.now();
+    }
+  }
   if (nodes.length === 0) return [];
-
-  const originals = nodes.map((n) => n.textContent || '');
   const joined = originals.join('');
-  const hits = hitsInText(joined, q, flags);
+  onParallel?.(workerCountFor(joined.length) > 1);
+  const hits = await searchText(joined, q, flags, onActive);
+  if (cancelled?.()) return [];
   if (hits.length === 0) return [];
 
   const spans: NodeSpan[] = [];
@@ -318,6 +429,7 @@ async function wrapMatches(
   const markClass = LAYERS[layer].mark;
   const marks: HTMLElement[] = [];
   const pdf = isPdfRoot(root);
+  let lastYield = performance.now();
   for (let h = hits.length - 1; h >= 0; h--) {
     if (cancelled?.()) return [];
     onCount?.(h + 1);
@@ -325,20 +437,26 @@ async function wrapMatches(
     if (pdf) {
       const group = overlayHit(spans, start, end, markClass);
       if (group) marks.unshift(group);
-      continue;
+    } else {
+      const created: HTMLElement[] = [];
+      const first = spanIndexAt(spans, start);
+      let last = first;
+      while (last < spans.length && spans[last].from < end) last += 1;
+      for (let s = last - 1; s >= first; s--) {
+        const span = spans[s];
+        if (span.to <= start || span.from >= end) continue;
+        const localStart = Math.max(0, start - span.from);
+        const localEnd = Math.min(span.to, end) - span.from;
+        const mark = wrapSlice(span.node, localStart, localEnd, markClass);
+        if (mark) created.push(mark);
+      }
+      created.reverse();
+      marks.unshift(...created);
     }
-    const created: HTMLElement[] = [];
-    for (let s = spans.length - 1; s >= 0; s--) {
-      const span = spans[s];
-      if (span.to <= start || span.from >= end) continue;
-      const localStart = Math.max(0, start - span.from);
-      const localEnd = Math.min(span.to, end) - span.from;
-      const mark = wrapSlice(span.node, localStart, localEnd, markClass);
-      if (mark) created.push(mark);
+    if (performance.now() - lastYield > 24) {
+      await yieldUi();
+      lastYield = performance.now();
     }
-    created.reverse();
-    marks.unshift(...created);
-    if (h % 8 === 0) await yieldUi();
   }
   return marks;
 }
@@ -387,7 +505,9 @@ export async function applyFinds(
   pageQuery: string,
   onProgress?: (layer: FindLayer, count: number) => void,
   cancelled?: () => boolean,
-  options?: { list?: FindFlags; page?: FindFlags },
+  options?: { list?: FindFlags; page?: FindFlags; byteSize?: number },
+  onParallel?: (layer: FindLayer, parallel: boolean) => void,
+  onActive?: (layer: FindLayer, count: number) => void,
 ): Promise<{ list: HTMLElement[]; page: HTMLElement[] }> {
   injectStyle(root);
   clearFind(root);
@@ -406,13 +526,39 @@ export async function applyFinds(
     const marks = await wrapMatches(root, listQ, 'list', (n) => {
       onProgress?.('list', n);
       onProgress?.('page', n);
-    }, cancelled, listFlags);
+    }, cancelled, listFlags, (parallel) => {
+      onParallel?.('list', parallel);
+      onParallel?.('page', parallel);
+    }, (count) => {
+      onActive?.('list', count);
+      onActive?.('page', count);
+    }, options?.byteSize ?? 0);
     for (const mark of marks) mark.classList.add(LAYERS.page.mark);
     expandCollapsedAround(marks);
     return { list: marks, page: marks };
   }
-  const list = await wrapMatches(root, listQ, 'list', (n) => onProgress?.('list', n), cancelled, listFlags);
-  const page = await wrapMatches(root, pageQ, 'page', (n) => onProgress?.('page', n), cancelled, pageFlags);
+  const list = await wrapMatches(
+    root,
+    listQ,
+    'list',
+    (n) => onProgress?.('list', n),
+    cancelled,
+    listFlags,
+    (parallel) => onParallel?.('list', parallel),
+    (count) => onActive?.('list', count),
+    options?.byteSize ?? 0,
+  );
+  const page = await wrapMatches(
+    root,
+    pageQ,
+    'page',
+    (n) => onProgress?.('page', n),
+    cancelled,
+    pageFlags,
+    (parallel) => onParallel?.('page', parallel),
+    (count) => onActive?.('page', count),
+    options?.byteSize ?? 0,
+  );
   expandCollapsedAround([...list, ...page]);
   return { list, page };
 }

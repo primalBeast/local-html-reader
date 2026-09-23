@@ -110,6 +110,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         server = uvicorn.Server(config)
         thread = threading.Thread(target=server.run, name="lhr-uvicorn", daemon=True)
         thread.start()
+        try:
+            from lhr.documents import prewarm_search_workers
+
+            prewarm_search_workers()
+        except Exception:
+            logging.getLogger("lhr").exception("Search workers did not start")
         if not wait_for_port(cfg.host, cfg.port):
             logging.getLogger("lhr").error("Server did not start on %s", url)
             server.should_exit = True
@@ -178,6 +184,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     parser = argparse.ArgumentParser(prog="lhr", description="Local HTML Reader")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true")

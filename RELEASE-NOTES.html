@@ -113,6 +113,20 @@
 
       <article>
         <div class="row">
+          <h2>Faster search, live matches, and file sizes</h2>
+          <span class="chip">unreleased</span>
+          <span class="date">2026-09-17</span>
+        </div>
+        <ul>
+          <li>Left-pane search includes HTML up to 128 MB, so large DocGen pages are no longer skipped. Lines are no longer glued together, so <code>65C0</code> next to <code>138E_ERROR</code> is not a hit for <code>65C0138E</code>.</li>
+          <li>Every file in the project is sorted by size and searched largest first, using one worker per logical processor minus one. Matches appear as they are found. The bottom of the left pane lists the file each worker is reading, largest first.</li>
+          <li>Find in page splits a large document across those workers. The spinner turns bright yellow while more than one thread is searching, with the live thread count beside it.</li>
+          <li>File size in MB sits to the right of each name (a decimal only under 1 MB). A small spinner sits by the name until that file has loaded. Clicking the file already open does not load it again, and choosing a file does not restart the search.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Word documents in the tree and viewer</h2>
           <span class="chip">b138712</span>
           <span class="date">2026-09-17</span>

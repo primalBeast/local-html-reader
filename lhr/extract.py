@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import logging
 import re
 from pathlib import Path
@@ -10,11 +11,26 @@ from lhr.html_text import html_visible_text
 
 logger = logging.getLogger("lhr.extract")
 
+# DocGen HTML exports are often 10–80 MiB. A lower cap made real pages unsearchable.
+MAX_SEARCH_BYTES = 128 * 1024 * 1024
+
 HTML_SUFFIXES = {".html", ".htm"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 PDF_SUFFIXES = {".pdf"}
 DOCX_SUFFIXES = {".docx", ".dotx"}
 DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES | DOCX_SUFFIXES
+
+# Drop scripts, styles, comments, and tags so a literal can still match text split by markup.
+_MARKUP_RE = re.compile(
+    rb"(?is)<(script|style|noscript|template)\b[^>]*>.*?</\1>|<!--.*?-->|<[^>]+>"
+)
+# PDF text extractors often emit "0 4 4 1 4 7 J" for "044147J". Only those
+# single-character runs are collapsed — not newlines between real tokens.
+_GLYPH_RUN = re.compile(r"(?<!\w)(?:\w[ \t\r\n]+){1,}\w(?!\w)")
+
+
+def _collapse_glyph_spaces(text: str) -> str:
+    return _GLYPH_RUN.sub(lambda m: re.sub(r"[ \t\r\n]+", "", m.group(0)), text)
 
 
 def text_matches_query(
@@ -47,20 +63,60 @@ def text_matches_query(
         return True
     if whole_word:
         return False
-    compact = "".join(text.split())
-    if pat.search(compact):
+    collapsed = _collapse_glyph_spaces(text)
+    if collapsed != text and pat.search(collapsed):
         return True
-    if not regex:
-        compact_q = "".join(raw.split())
-        if not compact_q:
-            return False
-        if match_case:
-            return compact_q in compact
-        return compact_q.lower() in compact.lower()
-    return False
+    if regex:
+        return False
+    compact_q = "".join(raw.split())
+    if not compact_q or compact_q == raw:
+        return False
+    hay = collapsed if match_case else collapsed.lower()
+    probe = compact_q if match_case else compact_q.lower()
+    return probe in hay
 
 
-def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int = 8 * 1024 * 1024) -> str:
+def literal_might_match(path: Path, needle: str, *, match_case: bool = False) -> bool:
+    """False only when a literal needle cannot be in this HTML or Markdown file.
+
+    PDF and Word stay True: their text is compressed, so the raw bytes are not the document text.
+    Large HTML is checked for the contiguous needle only. Smaller HTML also allows the needle
+    to be split by tags.
+    """
+    raw = (needle or "").strip()
+    if not raw or not raw.isascii():
+        return True
+    suffix = path.suffix.lower()
+    if suffix not in HTML_SUFFIXES and suffix not in MARKDOWN_SUFFIXES:
+        return True
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+    if size > MAX_SEARCH_BYTES:
+        return False
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    flags = 0 if match_case else re.IGNORECASE
+    if re.search(re.escape(raw).encode("ascii", errors="ignore"), data, flags):
+        return True
+    if suffix not in HTML_SUFFIXES or size > 4 * 1024 * 1024:
+        return False
+    stripped = _MARKUP_RE.sub(b"", data)
+    if re.search(re.escape(raw).encode("ascii", errors="ignore"), stripped, flags):
+        return True
+    if b"&" not in stripped:
+        return False
+    decoded = html_lib.unescape(stripped.decode("utf-8", errors="replace"))
+    probe = raw if match_case else raw.lower()
+    if not match_case:
+        decoded = decoded.lower()
+    return probe in decoded or probe in "".join(decoded.split())
+
+
+def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int = MAX_SEARCH_BYTES) -> str:
     suffix = path.suffix.lower()
     if suffix in HTML_SUFFIXES:
         try:

@@ -28,6 +28,12 @@ export type DocumentHit = {
   mtime: number;
 };
 
+export type SearchWorker = {
+  slot: number;
+  name: string;
+  size: number;
+};
+
 export type TreeNode = {
   name: string;
   rel: string;
@@ -262,7 +268,7 @@ export const api = {
   },
   async treeStream(
     q: string | undefined,
-    onProgress: (fileCount: number) => void,
+    onProgress: (fileCount: number, tree?: TreeNode[], workers?: SearchWorker[]) => void,
     signal?: AbortSignal,
     flags?: SearchFlags,
   ): Promise<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }> {
@@ -271,15 +277,7 @@ export const api = {
     applySearchFlags(params, flags);
     const qs = params.toString();
     const url = withProject(`/api/tree/stream${qs ? `?${qs}` : ''}`);
-    try {
-      return await readTreeSse(url, onProgress, signal);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      return request<{ tree: TreeNode[]; file_count: number; truncated: boolean; query: string }>(
-        `/api/tree${qs ? `?${qs}` : ''}`,
-        { signal },
-      );
-    }
+    return await readTreeSse(url, onProgress, signal);
   },
 };
 
@@ -292,7 +290,7 @@ type TreeStreamResult = {
 
 async function readTreeSse(
   url: string,
-  onProgress: (fileCount: number) => void,
+  onProgress: (fileCount: number, tree?: TreeNode[], workers?: SearchWorker[]) => void,
   signal?: AbortSignal,
 ): Promise<TreeStreamResult> {
   const res = await fetch(url, { signal, headers: { Accept: 'text/event-stream' } });
@@ -312,8 +310,9 @@ async function readTreeSse(
     const data = JSON.parse(dataLines.join('\n')) as TreeStreamResult & {
       file_count?: number;
       detail?: string;
+      workers?: SearchWorker[];
     };
-    if (eventName === 'progress') onProgress(Number(data.file_count) || 0);
+    if (eventName === 'progress') onProgress(Number(data.file_count) || 0, data.tree, data.workers);
     else if (eventName === 'done') doneResult = data as TreeStreamResult;
     else if (eventName === 'fail') throw new Error(data.detail || 'tree stream failed');
   };

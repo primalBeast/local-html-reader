@@ -8,6 +8,8 @@
     ariaLabel,
     history = [],
     searching = false,
+    parallel = false,
+    threadCount = 0,
     extraClass = '',
     onInput,
     onClear,
@@ -30,6 +32,8 @@
     ariaLabel: string;
     history?: SearchHistoryItem[];
     searching?: boolean;
+    parallel?: boolean;
+    threadCount?: number;
     extraClass?: string;
     onInput: (value: string) => void;
     onClear: () => void;
@@ -76,21 +80,43 @@
   function commitHistoryOnDismiss() {
     if (committedOnDismiss) return;
     committedOnDismiss = true;
-    runSearch();
+    if (value !== lastSearched) {
+      lastSearched = value;
+      runSearch();
+    }
     const term = value.trim();
     if (term) onCommitHistory?.(term, { regex, matchCase, wholeWord });
     closeList();
   }
 
+  function isDocumentListTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && Boolean(target.closest('.tree, .search-workers'));
+  }
+
   function closeIfOutside(target: EventTarget | null) {
     if (!wrapEl || !(target instanceof Node) || wrapEl.contains(target)) return;
+    if (isDocumentListTarget(target)) {
+      committedOnDismiss = true;
+      closeList();
+      return;
+    }
     commitHistoryOnDismiss();
   }
 
   function onInputBlur(event: FocusEvent) {
     const next = event.relatedTarget;
     if (next instanceof Node && wrapEl?.contains(next)) return;
+    if (isDocumentListTarget(next)) {
+      committedOnDismiss = true;
+      closeList();
+      return;
+    }
     requestAnimationFrame(() => {
+      if (isDocumentListTarget(document.activeElement)) {
+        committedOnDismiss = true;
+        closeList();
+        return;
+      }
       if (!wrapEl?.contains(document.activeElement)) commitHistoryOnDismiss();
     });
   }
@@ -110,21 +136,27 @@
     highlight = Math.max(0, Math.min(history.length - 1, highlight + dir));
   }
 
-  function applyHighlight() {
-    if (highlight === null) return false;
-    const item = history[highlight];
-    if (!item) return false;
+  function pickHistoryItem(item: SearchHistoryItem) {
+    lastSearched = item.term;
+    committedOnDismiss = true;
     closeList();
     onPick(item.term, {
       regex: item.regex,
       matchCase: item.matchCase,
       wholeWord: item.wholeWord,
     });
+  }
+
+  function applyHighlight() {
+    if (highlight === null) return false;
+    const item = history[highlight];
+    if (!item) return false;
+    pickHistoryItem(item);
     return true;
   }
 
   function toggleOpt(kind: 'regex' | 'matchCase' | 'wholeWord') {
-    lastSearched = '';
+    lastSearched = value;
     const next = {
       regex: kind === 'regex' ? !regex : regex,
       matchCase: kind === 'matchCase' ? !matchCase : matchCase,
@@ -306,7 +338,10 @@
         >.*</button>
       </div>
       {#if searching}
-        <span class="search-spinner" aria-label="Searching" role="status"></span>
+        <span class="search-spinner" class:parallel aria-label="Searching" role="status"></span>
+        {#if threadCount > 0}
+          <span class="search-thread-count" class:parallel>{threadCount}</span>
+        {/if}
       {/if}
       {#if value}
         <button class="search-clear" type="button" tabindex="-1" onclick={() => onClear()} aria-label="Clear search">×</button>
@@ -325,14 +360,7 @@
               e.preventDefault();
               e.stopPropagation();
             }}
-            onclick={() => {
-              closeList();
-              onPick(item.term, {
-                regex: item.regex,
-                matchCase: item.matchCase,
-                wholeWord: item.wholeWord,
-              });
-            }}
+            onclick={() => pickHistoryItem(item)}
           >
             {item.term}
             {#if item.matchCase}<span class="search-history-re" title="Match case">Aa</span>{/if}

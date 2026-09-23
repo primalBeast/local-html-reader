@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
+from multiprocessing import get_context
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Any
 
-from lhr.extract import DOC_SUFFIXES, extract_search_text, text_matches_query
+from lhr.extract import (
+    DOC_SUFFIXES,
+    MAX_SEARCH_BYTES,
+    extract_search_text,
+    literal_might_match,
+    text_matches_query,
+)
 from lhr.paths import PathEscapeError, is_within, normalize_rel, resolve_under_root
 from lhr.projects import (
     add_folder as project_add_folder,
@@ -16,7 +26,6 @@ from lhr.projects import (
 )
 
 MAX_LIST = 5000
-MAX_SEARCH_BYTES = 8 * 1024 * 1024
 
 
 def _root_records(*, enabled_only: bool = True, project: str | None = None) -> list[dict[str, str]]:
@@ -149,12 +158,127 @@ def _file_matches_query(
 ) -> bool:
     if not needle:
         return True
+    if not regex and not literal_might_match(path, needle, match_case=match_case):
+        return False
     return _content_contains(
         path, needle, root=root, regex=regex, match_case=match_case, whole_word=whole_word
     )
 
 
-def iter_matching_html(
+def _search_workers() -> int:
+    cpu = os.cpu_count() or 4
+    # Leave one logical processor free so the window can still be dragged.
+    if cpu > 2:
+        return cpu - 1
+    return max(2, cpu)
+
+
+def jobs_largest_first(sized: list[tuple[int, tuple[Any, ...]]]) -> list[tuple[Any, ...]]:
+    """Largest files first so each worker takes the next biggest remaining file."""
+    ordered = sorted(sized, key=lambda item: (-item[0], str(item[1][2]).lower()))
+    return [job for _size, job in ordered]
+
+
+_mp_lock = threading.Lock()
+_mp_ctx = None
+_mp_work = None
+_mp_events = None
+_mp_procs: list[Any] = []
+_search_ids = 0
+
+
+def _process_search_worker(slot: int, work, events) -> None:
+    """Process-pool worker. Heavy parses stay off the UI process."""
+    while True:
+        item = work.get()
+        if item is None:
+            continue
+        search_id, size, job = item
+        events.put((search_id, "working", slot, {"slot": slot, "name": job[3], "size": int(size)}))
+        try:
+            hit = _hit_for_file(job)
+        except Exception:
+            hit = None
+        events.put((search_id, "finished", slot, hit))
+
+
+def prewarm_search_workers() -> None:
+    """Start search processes on the main thread (required on Windows)."""
+    _ensure_search_processes(_search_workers())
+
+
+def _ensure_search_processes(count: int):
+    global _mp_ctx, _mp_work, _mp_events
+    with _mp_lock:
+        if _mp_ctx is None:
+            _mp_ctx = get_context("spawn")
+            _mp_work = _mp_ctx.Queue()
+            _mp_events = _mp_ctx.Queue()
+        while len(_mp_procs) < count:
+            slot = len(_mp_procs) + 1
+            proc = _mp_ctx.Process(
+                target=_process_search_worker,
+                args=(slot, _mp_work, _mp_events),
+                daemon=True,
+                name=f"lhr-search-{slot}",
+            )
+            proc.start()
+            _mp_procs.append(proc)
+        return _mp_work, _mp_events
+
+
+def _next_search_id() -> int:
+    global _search_ids
+    with _mp_lock:
+        _search_ids += 1
+        return _search_ids
+
+
+def _drain_queue(q) -> None:
+    while True:
+        try:
+            q.get_nowait()
+        except Empty:
+            return
+
+
+def _hit_for_file(
+    job: tuple[str, str, str, str, str, bool, bool, bool],
+) -> dict[str, Any] | None:
+    root_id, root_path, rel, name, needle, regex, match_case, whole_word = job
+    path = Path(root_path) / rel
+    try:
+        if not _file_matches_query(
+            path,
+            name,
+            rel,
+            needle,
+            root=Path(root_path),
+            regex=regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        ):
+            return None
+        try:
+            st = path.stat()
+            size = int(st.st_size)
+            mtime = float(st.st_mtime)
+        except OSError:
+            size = 0
+            mtime = 0.0
+        return {
+            "root_id": root_id,
+            "root_path": root_path,
+            "rel": rel,
+            "name": name,
+            "size": size,
+            "mtime": mtime,
+        }
+    except Exception:
+        return None
+
+
+def iter_search_activity(
     query: str | None = None,
     root_id: str | None = None,
     limit: int = MAX_LIST,
@@ -163,7 +287,7 @@ def iter_matching_html(
     match_case: bool = False,
     whole_word: bool = False,
 ):
-    """Yield matching HTML file hits one at a time (for live search counts)."""
+    """Yield ("hit", hit) and ("workers", rows) while search threads run."""
     needle = (query or "").strip()
     records = _root_records(project=project)
     if root_id:
@@ -172,7 +296,7 @@ def iter_matching_html(
             raise KeyError(f"unknown documents root: {root_id}")
 
     cap = max(1, min(int(limit), MAX_LIST))
-    yielded = 0
+    jobs: list[tuple[int, tuple[Any, ...]]] = []
     for rec in records:
         root = Path(rec["path"]).expanduser()
         try:
@@ -201,35 +325,209 @@ def iter_matching_html(
                     normalize_rel(rel)
                 except (OSError, ValueError, PathEscapeError):
                     continue
-                if not _file_matches_query(
-                    file_path,
-                    name,
-                    rel,
-                    needle,
-                    root=root_r,
-                    regex=regex,
-                    match_case=match_case,
-                    whole_word=whole_word,
-                ):
-                    continue
                 try:
-                    st = file_path.stat()
-                    size = int(st.st_size)
-                    mtime = float(st.st_mtime)
+                    size = int(file_path.stat().st_size)
                 except OSError:
                     size = 0
-                    mtime = 0.0
-                yield {
-                    "root_id": rec["id"],
-                    "root_path": str(root_r),
-                    "rel": rel,
-                    "name": name,
-                    "size": size,
-                    "mtime": mtime,
-                }
+                jobs.append(
+                    (
+                        size,
+                        (rec["id"], str(root_r), rel, name, needle, regex, match_case, whole_word),
+                    )
+                )
+
+    sized = sorted(jobs, key=lambda item: (-item[0], str(item[1][2]).lower())) if needle else jobs
+    ordered = [job for _size, job in sized]
+
+    if not needle or len(ordered) < 2:
+        yielded = 0
+        for job in ordered:
+            hit = _hit_for_file(job)
+            if hit is None:
+                continue
+            yield ("hit", hit)
+            yielded += 1
+            if yielded >= cap:
+                return
+        return
+
+    if _mp_procs:
+        yield from _search_with_processes(sized, cap)
+    else:
+        yield from _search_with_threads(sized, cap)
+
+
+def _apply_search_batch(
+    batch: list[tuple],
+    active: dict[int, dict[str, Any]],
+    *,
+    stopped: bool,
+    yielded: int,
+    cap: int,
+) -> tuple[bool, int, list[dict[str, Any]], int]:
+    """Apply worker events. Returns stopped, yielded, new hits, alive delta."""
+    hits: list[dict[str, Any]] = []
+    exited = 0
+    for kind, slot, payload in batch:
+        if kind == "working" and not stopped:
+            active[slot] = payload
+        elif kind == "finished":
+            active.pop(slot, None)
+            if payload is not None and not stopped:
                 yielded += 1
+                hits.append(payload)
                 if yielded >= cap:
+                    stopped = True
+        elif kind == "exit":
+            active.pop(slot, None)
+            exited += 1
+    return stopped, yielded, hits, exited
+
+
+def _batched(events, first):
+    batch = [first]
+    while True:
+        try:
+            batch.append(events.get_nowait())
+        except Empty:
+            return batch
+
+
+def _search_with_threads(sized: list[tuple[int, tuple[Any, ...]]], cap: int):
+    work: Queue = Queue()
+    for item in sized:
+        work.put(item)
+    worker_count = min(_search_workers(), len(sized))
+    for _ in range(worker_count):
+        work.put(None)
+    events: Queue = Queue()
+
+    def worker(slot: int) -> None:
+        try:
+            while True:
+                item = work.get()
+                if item is None:
                     return
+                size, job = item
+                events.put(("working", slot, {"slot": slot, "name": job[3], "size": int(size)}))
+                hit = _hit_for_file(job)
+                events.put(("finished", slot, hit))
+        finally:
+            events.put(("exit", slot, None))
+
+    threads = [
+        threading.Thread(target=worker, args=(slot,), daemon=True) for slot in range(1, worker_count + 1)
+    ]
+    for thread in threads:
+        thread.start()
+
+    active: dict[int, dict[str, Any]] = {}
+    alive = worker_count
+    yielded = 0
+    stopped = False
+    last_emit = 0.0
+    try:
+        while alive:
+            batch = _batched(events, events.get())
+            stopped, yielded, hits, exited = _apply_search_batch(
+                batch, active, stopped=stopped, yielded=yielded, cap=cap
+            )
+            alive -= exited
+            for hit in hits:
+                yield ("hit", hit)
+            if stopped:
+                _drop_queued_jobs(work)
+            now = time.monotonic()
+            if (active or alive == 0) and (alive == 0 or now - last_emit >= 0.2 or hits):
+                last_emit = now
+                yield ("workers", _worker_rows(active))
+            if stopped and not active:
+                break
+    finally:
+        _drop_queued_jobs(work)
+        for _ in range(worker_count):
+            work.put(None)
+
+
+def _search_with_processes(sized: list[tuple[int, tuple[Any, ...]]], cap: int):
+    """One size-sorted queue. Processes pull the next largest file until it is empty."""
+    work, events = _ensure_search_processes(min(_search_workers(), len(sized)))
+    _drain_queue(work)
+    _drain_queue(events)
+    search_id = _next_search_id()
+    for size, job in sized:
+        work.put((search_id, size, job))
+    active: dict[int, dict[str, Any]] = {}
+    remaining = len(sized)
+    yielded = 0
+    stopped = False
+    last_emit = 0.0
+    while remaining:
+        first = events.get()
+        batch = _batched(events, first)
+        owned = [item[1:] for item in batch if item[0] == search_id]
+        if not owned:
+            continue
+        stopped, yielded, hits, _exited = _apply_search_batch(
+            owned, active, stopped=stopped, yielded=yielded, cap=cap
+        )
+        finished = sum(1 for kind, _slot, _payload in owned if kind == "finished")
+        remaining -= finished
+        for hit in hits:
+            yield ("hit", hit)
+        if stopped:
+            _drain_queue(work)
+            yield ("workers", [])
+            return
+        now = time.monotonic()
+        if active and (now - last_emit >= 0.2 or hits):
+            last_emit = now
+            yield ("workers", _worker_rows(active))
+    yield ("workers", [])
+
+
+def _worker_rows(active: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        active.values(),
+        key=lambda row: (-int(row.get("size") or 0), int(row.get("slot") or 0)),
+    )
+
+
+def _drop_queued_jobs(work: Queue) -> None:
+    """Leave worker stop markers. Drop files still waiting."""
+    markers = 0
+    while True:
+        try:
+            item = work.get_nowait()
+        except Empty:
+            break
+        if item is None:
+            markers += 1
+    for _ in range(markers):
+        work.put(None)
+
+
+def iter_matching_html(
+    query: str | None = None,
+    root_id: str | None = None,
+    limit: int = MAX_LIST,
+    project: str | None = None,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+):
+    """Yield matching file hits. Search workers take the largest files first."""
+    for kind, payload in iter_search_activity(
+        query=query,
+        root_id=root_id,
+        limit=limit,
+        project=project,
+        regex=regex,
+        match_case=match_case,
+        whole_word=whole_word,
+    ):
+        if kind == "hit":
+            yield payload
 
 
 def list_documents(

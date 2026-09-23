@@ -6,7 +6,7 @@ from zipfile import ZipFile
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from lhr.extract import extract_search_text, text_matches_query
+from lhr.extract import extract_search_text, literal_might_match, text_matches_query
 
 
 def docx_bytes_with_text(text: str) -> bytes:
@@ -46,6 +46,21 @@ def test_text_matches_ignores_pdf_glyph_spacing() -> None:
     assert text_matches_query("Account 0 4 4 1 4 7 J TFSA", "044147J")
     assert text_matches_query("044147J - TD Waterhouse", "044147j")
     assert not text_matches_query("044147S", "044147J")
+
+
+def test_search_jobs_run_largest_file_first() -> None:
+    from lhr.documents import jobs_largest_first
+
+    small = (10, ("root", "C:/docs", "a.html", "a.html", "q", False, False, False))
+    big = (90, ("root", "C:/docs", "b.html", "b.html", "q", False, False, False))
+    mid = (40, ("root", "C:/docs", "c.html", "c.html", "q", False, False, False))
+    ordered = jobs_largest_first([small, mid, big])
+    assert [job[2] for job in ordered] == ["b.html", "c.html", "a.html"]
+
+
+def test_text_matches_does_not_join_tokens_across_lines() -> None:
+    text = "the cash unit transport of cash unit\n\n\n65C0\n138E_ERROR\n1\n000DP0"
+    assert not text_matches_query(text, "65C0138E")
 
 
 def test_text_matches_regex() -> None:
@@ -89,6 +104,31 @@ def test_extracts_text_from_aes_encrypted_pdf(tmp_path: Path) -> None:
     text = extract_search_text(path)
     assert "PDFUNIQUETOKEN" in text
     assert text_matches_query(text, "pdfuniquetoken")
+
+
+def test_literal_prefilter_skips_html_that_cannot_match(tmp_path: Path) -> None:
+    path = tmp_path / "page.html"
+    path.write_text("<html><body><p>nothing relevant</p></body></html>", encoding="utf-8")
+    assert literal_might_match(path, "65C0138E") is False
+    assert literal_might_match(path, "nothing") is True
+
+
+def test_literal_prefilter_keeps_tag_split_html(tmp_path: Path) -> None:
+    path = tmp_path / "split.html"
+    path.write_text("<html><body><p>65C<b>0138E</b></p></body></html>", encoding="utf-8")
+    assert literal_might_match(path, "65C0138E") is True
+    assert "65C0138E" in extract_search_text(path)
+
+
+def test_html_larger_than_8mb_is_still_searched(tmp_path: Path) -> None:
+    path = tmp_path / "big.html"
+    token = "65C0138E"
+    pad = "x" * (8 * 1024 * 1024 + 64)
+    path.write_text(f"<html><body><p>M_DATA : {token}</p>{pad}</body></html>", encoding="utf-8")
+    assert path.stat().st_size > 8 * 1024 * 1024
+    text = extract_search_text(path)
+    assert token in text
+    assert text_matches_query(text, token)
 
 
 def test_extracts_text_from_docx(tmp_path: Path) -> None:
