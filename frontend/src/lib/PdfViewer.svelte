@@ -69,7 +69,12 @@
           (parseFloat(getComputedStyle(host).paddingBottom) || 0)
         : 48;
       const avail = Math.max(80, viewportHeight() - hostPad - 8);
-      return avail / pageHeightPt;
+      const heightScale = avail / pageHeightPt;
+      if (!frame || pageWidthPt < 1) return heightScale;
+      // Stay a few pixels inside the scrollport so a rounding error cannot
+      // turn the horizontal scrollbar on and off.
+      const widthScale = Math.max(80, frame.clientWidth - 8) / pageWidthPt;
+      return Math.min(heightScale, widthScale);
     }
 
     function clampScale(value: number): number {
@@ -136,7 +141,7 @@
       host.style.marginLeft = '0';
       host.style.transformOrigin = 'top center';
       host.style.transform = `scale(${nextFit})`;
-      slot.style.width = `${Math.max(viewW, nextVW)}px`;
+      slot.style.width = nextVW > viewW + 2 ? `${Math.ceil(nextVW)}px` : '';
       slot.style.height = `${nextVH}px`;
       liveFit = nextFit;
       scrollKeepCentered(prevVW, prevVH, Math.max(viewW, nextVW), nextVH);
@@ -165,17 +170,19 @@
           if (cancelled || gen !== paintGen) return;
           const page = await pdf.getPage(n);
           const viewport = page.getViewport({ scale });
+          const cssW = Math.floor(viewport.width);
+          const cssH = Math.floor(viewport.height);
           const wrap = document.createElement('div');
           wrap.className = 'pdf-page';
           wrap.style.setProperty('--scale-factor', String(scale));
-          wrap.style.width = `${viewport.width}px`;
-          wrap.style.height = `${viewport.height}px`;
+          wrap.style.width = `${cssW}px`;
+          wrap.style.height = `${cssH}px`;
           const canvas = document.createElement('canvas');
           const outputScale = window.devicePixelRatio || 1;
           canvas.width = Math.floor(viewport.width * outputScale);
           canvas.height = Math.floor(viewport.height * outputScale);
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
+          canvas.style.width = `${cssW}px`;
+          canvas.style.height = `${cssH}px`;
           const ctx = canvas.getContext('2d');
           if (!ctx) continue;
           const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
@@ -204,8 +211,8 @@
             img.src = url;
             img.alt = `Page ${n}`;
             img.draggable = true;
-            img.style.width = `${viewport.width}px`;
-            img.style.height = `${viewport.height}px`;
+            img.style.width = `${cssW}px`;
+            img.style.height = `${cssH}px`;
             wrap.append(img, textDiv);
           } else {
             wrap.append(canvas, textDiv);
@@ -221,12 +228,15 @@
         blobUrls.push(...nextBlobs);
         resetLiveScale();
         const firstPage = root.querySelector('.pdf-page') as HTMLElement | null;
-        lastWidth = firstPage ? firstPage.offsetWidth : Math.round(pageWidthPt * scale);
+        lastWidth = firstPage ? firstPage.offsetWidth : Math.floor(pageWidthPt * scale);
         paintedScale = scale;
         paintedHeight = root.scrollHeight;
-        if (firstPage && lastWidth > gutterWidth() && slot) {
+        if (frame && slot && lastWidth > frame.clientWidth + 2) {
           slot.style.width = `${lastWidth}px`;
           root.style.width = `${lastWidth}px`;
+        } else if (slot) {
+          slot.style.width = '';
+          root.style.width = '';
         }
         loading = false;
         requestAnimationFrame(() => {
@@ -349,7 +359,11 @@
 
     const ro = new ResizeObserver(() => {
       if (!pdfDoc) return;
-      if (!userHasZoomed) desiredScale = clampScale(fitHeightScale());
+      if (!userHasZoomed) {
+        const next = clampScale(fitHeightScale());
+        if (Math.abs(next - desiredScale) < 0.01 && Math.abs(next - paintedScale) < 0.01) return;
+        desiredScale = next;
+      }
       applyLiveZoom();
       schedulePaint();
     });

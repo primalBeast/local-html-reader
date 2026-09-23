@@ -41,17 +41,7 @@
   let serverOk = $state(true);
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 2;
-  let uiZoom = $state(readStoredZoom());
-
-  function readStoredZoom(): number {
-    try {
-      const n = Number(localStorage.getItem('lhr-ui-zoom'));
-      if (Number.isFinite(n)) return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, n));
-    } catch {
-      /* ignore */
-    }
-    return 1;
-  }
+  let uiZoom = $state(1);
 
   function clampZoom(value: number): number {
     return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
