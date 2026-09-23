@@ -45,6 +45,30 @@ def text_matches_query(
     raw = (needle or "").strip()
     if not raw:
         return True
+    return (
+        count_text_matches(
+            text,
+            raw,
+            regex=regex,
+            match_case=match_case,
+            whole_word=whole_word,
+        )
+        > 0
+    )
+
+
+def count_text_matches(
+    text: str,
+    needle: str,
+    *,
+    regex: bool = False,
+    match_case: bool = False,
+    whole_word: bool = False,
+) -> int:
+    """How many times the query occurs, using the same rules as a hit."""
+    raw = (needle or "").strip()
+    if not raw:
+        return 0
     flags = re.UNICODE
     if not match_case:
         flags |= re.IGNORECASE
@@ -58,22 +82,66 @@ def text_matches_query(
     try:
         pat = re.compile(source, flags)
     except re.error:
-        return False
-    if pat.search(text):
-        return True
-    if whole_word:
-        return False
+        return 0
+    return count_query_matches(
+        text,
+        raw,
+        pat,
+        regex=regex,
+        match_case=match_case,
+        whole_word=whole_word,
+    )
+
+
+def count_query_matches(
+    text: str,
+    raw: str,
+    pat: re.Pattern[str],
+    *,
+    regex: bool,
+    match_case: bool,
+    whole_word: bool,
+) -> int:
+    """How many times the query occurs, using the same rules as a hit."""
+    count = _count_pattern(pat, text)
+    if count or whole_word:
+        return count
     collapsed = _collapse_glyph_spaces(text)
-    if collapsed != text and pat.search(collapsed):
-        return True
+    if collapsed != text:
+        count = _count_pattern(pat, collapsed)
+        if count:
+            return count
     if regex:
-        return False
+        return 0
     compact_q = "".join(raw.split())
     if not compact_q or compact_q == raw:
-        return False
+        return 0
     hay = collapsed if match_case else collapsed.lower()
     probe = compact_q if match_case else compact_q.lower()
-    return probe in hay
+    return _count_substring(hay, probe)
+
+
+def _count_pattern(pat: re.Pattern[str], text: str) -> int:
+    count = 0
+    for match in pat.finditer(text):
+        if match.end() == match.start():
+            continue
+        count += 1
+    return count
+
+
+def _count_substring(hay: str, probe: str) -> int:
+    if not probe:
+        return 0
+    count = 0
+    start = 0
+    step = max(1, len(probe))
+    while True:
+        found = hay.find(probe, start)
+        if found < 0:
+            return count
+        count += 1
+        start = found + step
 
 
 def literal_might_match(path: Path, needle: str, *, match_case: bool = False) -> bool:
@@ -155,6 +223,45 @@ def _pdf_text(path: Path, *, max_bytes: int) -> str:
         return ""
     if size > max_bytes:
         return ""
+    text = _pdf_text_pdfium(path)
+    if text.strip():
+        return text
+    return _pdf_text_pypdf(path)
+
+
+def _pdf_text_pdfium(path: Path) -> str:
+    """Visible page text, using the same PDFium engine family as the viewer."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return ""
+    pdf = None
+    try:
+        try:
+            pdf = pdfium.PdfDocument(str(path))
+        except Exception:
+            pdf = pdfium.PdfDocument(str(path), password="")
+        parts: list[str] = []
+        for index in range(len(pdf)):
+            page = pdf[index]
+            try:
+                textpage = page.get_textpage()
+                try:
+                    parts.append(textpage.get_text_bounded() or "")
+                finally:
+                    textpage.close()
+            finally:
+                page.close()
+        return "\n".join(parts)
+    except Exception:
+        logger.debug("PDFium extract failed for %s", path, exc_info=True)
+        return ""
+    finally:
+        if pdf is not None:
+            pdf.close()
+
+
+def _pdf_text_pypdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
         from pypdf.errors import DependencyError
@@ -172,9 +279,16 @@ def _pdf_text(path: Path, *, max_bytes: int) -> str:
                 logger.debug("Could not decrypt PDF %s", path, exc_info=True)
                 return ""
         parts: list[str] = []
-        for page in reader.pages[:200]:
+        for page in reader.pages:
             try:
-                parts.append(page.extract_text() or "")
+                chunks: list[str] = []
+
+                def visitor(text: str, _cm: object, _tm: object, _font: object, _size: object) -> None:
+                    if text:
+                        chunks.append(text)
+
+                page.extract_text(visitor_text=visitor) or ""
+                parts.append("".join(chunks) or page.extract_text() or "")
             except DependencyError:
                 logger.warning("PDF %s needs cryptography to extract text", path)
                 return ""

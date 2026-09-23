@@ -233,11 +233,47 @@ html[data-webview='1'] .topbar-spacer { cursor: grab; }
   align-self: stretch;
 }
 
+.zoom-readout {
+  flex: 0 0 auto;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+body.lhr-zoom-scrubbing,
+body.lhr-zoom-scrubbing * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
 .status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   font-size: 0.75rem;
   color: var(--text-faint);
   font-family: var(--mono);
   flex-shrink: 0;
+}
+
+.server-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.server-dot.ok {
+  background: #4ade80;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.9);
+}
+
+.server-dot.down {
+  background: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.9);
 }
 
 .window-chrome {
@@ -746,6 +782,20 @@ input[type="text"]:focus {
   font-size: 0.7rem;
 }
 
+.file-matches {
+  flex: 0 0 2.4rem;
+  text-align: right;
+  padding-right: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.file-indent {
+  flex: 0 0 auto;
+}
+
 .file-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -859,6 +909,14 @@ input[type="text"]:focus {
   background: var(--bg-elevated);
 }
 
+.doc-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .doc-path {
   font-family: var(--mono);
   color: var(--text);
@@ -870,12 +928,19 @@ input[type="text"]:focus {
   cursor: default;
 }
 
+.doc-pages {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  line-height: 1.2;
+}
+
 .page-finds {
   margin: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1.15rem;
+  gap: 1.85rem;
   min-width: 0;
   width: 100%;
   flex-wrap: wrap;
@@ -890,7 +955,7 @@ input[type="text"]:focus {
 }
 
 .page-find + .page-find {
-  padding-left: 1.15rem;
+  padding-left: 1.85rem;
   border-left: 1px solid var(--border-strong);
 }
 

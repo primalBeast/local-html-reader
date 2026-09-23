@@ -8,11 +8,13 @@
     overlay = false,
     onReady,
     onSettled,
+    onPageCount,
   }: {
     src: string;
     overlay?: boolean;
     onReady?: (root: HTMLElement) => void;
     onSettled?: (src: string) => void;
+    onPageCount?: (pages: number, src: string) => void;
   } = $props();
 
   let frame = $state<HTMLDivElement | null>(null);
@@ -304,6 +306,7 @@
         }
         const previous = pdfDoc;
         pdfDoc = pdf;
+        onPageCount?.(pdf.numPages, url);
         const firstPage = await pdf.getPage(1);
         const unscaled = firstPage.getViewport({ scale: 1 });
         pageWidthPt = unscaled.width;

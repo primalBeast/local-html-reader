@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 logger = logging.getLogger("lhr.branding")
@@ -36,6 +37,19 @@ def splash_close_path() -> Path:
     return Path(os.environ.get("TEMP") or os.environ.get("TMP") or ".") / "lhr-splash.close"
 
 
+def splash_owner_path() -> Path:
+    return Path(os.environ.get("TEMP") or os.environ.get("TMP") or ".") / "lhr-splash.owner"
+
+
+def _splash_recently_started(max_age: float = 30.0) -> bool:
+    owner = splash_owner_path()
+    try:
+        age = time.time() - owner.stat().st_mtime
+    except OSError:
+        return False
+    return age < max_age
+
+
 def apply_app_user_model_id() -> None:
     if sys.platform != "win32":
         return
@@ -62,8 +76,12 @@ def start_splash() -> None:
         splash_close_path().unlink(missing_ok=True)
     except OSError:
         pass
-    if _find_splash_hwnd():
+    if _find_splash_hwnd() or _splash_recently_started():
         return
+    try:
+        splash_owner_path().write_text("1", encoding="ascii")
+    except OSError:
+        pass
     try:
         # GUI subsystem: do not use CREATE_NO_WINDOW / SW_HIDE (those hide the splash).
         subprocess.Popen(

@@ -7,12 +7,16 @@
     y,
     full,
     rel,
+    file = false,
+    onLaunch,
     onClose,
   }: {
     x: number;
     y: number;
     full: string;
     rel: string;
+    file?: boolean;
+    onLaunch?: () => void;
     onClose: () => void;
   } = $props();
 
@@ -56,8 +60,12 @@
   class="path-menu"
   style={`left:${left}px;top:${top}px`}
   role="menu"
-  aria-label="Copy path"
+  aria-label="File actions"
 >
+  {#if file}
+    <button type="button" role="menuitem" onclick={() => onLaunch?.()}>Launch</button>
+  {/if}
+  <button type="button" role="menuitem" onclick={() => void copy(full)}>Copy path</button>
   <button type="button" role="menuitem" onclick={() => void copy(full)}>Copy full path</button>
   <button type="button" role="menuitem" onclick={() => void copy(rel)}>Copy relative path</button>
 </div>

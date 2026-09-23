@@ -294,6 +294,23 @@ def test_list_and_view_html_under_root(client: TestClient, docs_tree: dict[str, 
     assert "filename=" not in disp
 
 
+def test_launch_opens_file_in_default_app(client: TestClient, docs_tree: dict[str, Path], monkeypatch):
+    added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    assert added.status_code == 200, added.text
+    root_id = added.json()["id"]
+    opened: list[str] = []
+
+    def fake_startfile(path: str) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr("lhr.documents.os.startfile", fake_startfile, raising=False)
+    ok = client.post("/api/documents/launch", json={"root_id": root_id, "rel": "index.html"})
+    assert ok.status_code == 200, ok.text
+    assert opened and opened[0].endswith("index.html")
+    denied = client.post("/api/documents/launch", json={"root_id": root_id, "rel": "../secret.html"})
+    assert denied.status_code == 400
+
+
 def test_rejects_path_traversal(client: TestClient, docs_tree: dict[str, Path]):
     added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
     root_id = added.json()["id"]

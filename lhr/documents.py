@@ -15,6 +15,7 @@ from lhr.extract import (
     MAX_SEARCH_BYTES,
     extract_search_text,
     literal_might_match,
+    count_text_matches,
     text_matches_query,
 )
 from lhr.paths import PathEscapeError, is_within, normalize_rel, resolve_under_root
@@ -121,6 +122,21 @@ def resolve_document(root_id: str, rel: str, *, project: str | None = None) -> P
     return resolve_under_root(root_dir(root_id, project=project), rel)
 
 
+def launch_in_default_app(path: Path) -> None:
+    """Open a file with the operating system's default application."""
+    import subprocess
+    import sys
+
+    target = str(path)
+    if sys.platform == "win32":
+        os.startfile(target)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", target])
+        return
+    subprocess.Popen(["xdg-open", target])
+
+
 def _rel_posix(root: Path, file_path: Path) -> str:
     rel = file_path.resolve().relative_to(root.resolve())
     return rel.as_posix()
@@ -155,31 +171,30 @@ def _file_matches_query(
     regex: bool = False,
     match_case: bool = False,
     whole_word: bool = False,
-) -> bool:
+) -> int | None:
+    """Match count, or None when the file is not a hit. Empty queries return 0."""
     if not needle:
-        return True
+        return 0
     from lhr.text_index import lookup_text, schedule_save
 
     cached = lookup_text(path)
-    if cached is not None:
-        return text_matches_query(
-            cached,
-            needle,
-            regex=regex,
-            match_case=match_case,
-            whole_word=whole_word,
-        )
-    if not regex and not literal_might_match(path, needle, match_case=match_case):
-        return False
-    text = extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES)
-    schedule_save(path, text)
-    return text_matches_query(
+    if cached is None:
+        if not regex and not literal_might_match(path, needle, match_case=match_case):
+            return None
+        text = extract_search_text(path, root=root, max_bytes=MAX_SEARCH_BYTES)
+        schedule_save(path, text)
+    else:
+        text = cached
+    count = count_text_matches(
         text,
         needle,
         regex=regex,
         match_case=match_case,
         whole_word=whole_word,
     )
+    if count <= 0:
+        return None
+    return count
 
 
 def _search_workers() -> int:
@@ -265,7 +280,7 @@ def _hit_for_file(
     root_id, root_path, rel, name, needle, regex, match_case, whole_word = job
     path = Path(root_path) / rel
     try:
-        if not _file_matches_query(
+        matches = _file_matches_query(
             path,
             name,
             rel,
@@ -274,7 +289,8 @@ def _hit_for_file(
             regex=regex,
             match_case=match_case,
             whole_word=whole_word,
-        ):
+        )
+        if matches is None:
             return None
         try:
             st = path.stat()
@@ -283,7 +299,7 @@ def _hit_for_file(
         except OSError:
             size = 0
             mtime = 0.0
-        return {
+        hit: dict[str, Any] = {
             "root_id": root_id,
             "root_path": root_path,
             "rel": rel,
@@ -291,6 +307,9 @@ def _hit_for_file(
             "size": size,
             "mtime": mtime,
         }
+        if needle and matches > 0:
+            hit["match_count"] = matches
+        return hit
     except Exception:
         return None
 
@@ -646,6 +665,8 @@ def _tree_from_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if is_file:
                     node["size"] = hit.get("size", 0)
                     node["mtime"] = hit.get("mtime", 0)
+                    if hit.get("match_count"):
+                        node["match_count"] = int(hit["match_count"])
                 else:
                     node["children"] = []
                 index[key] = node

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from lhr.config import AppConfig, set_config
-from lhr.text_index import lookup_text, save_extracted, schedule_save
+from lhr.text_index import INDEX_VERSION, lookup_text, save_extracted, schedule_save
 
 
 @pytest.fixture()
@@ -25,8 +25,21 @@ def test_index_remembers_text_until_the_file_changes(indexed: Path):
     meta = next((indexed / "data" / "text-index").glob("*.json")).read_text(encoding="utf-8")
     assert "sha256" in meta
     assert "mtime_ns" in meta
+    assert f'"version": {INDEX_VERSION}' in meta
     path.write_text("<html><body>CHANGED token</body></html>", encoding="utf-8")
     assert lookup_text(path) is None
+
+
+def test_older_index_version_is_rebuilt(indexed: Path):
+    path = indexed / "old.html"
+    path.write_text("<html><body>OLDVERSION</body></html>", encoding="utf-8")
+    save_extracted(path, "OLDVERSION")
+    meta_path = next((indexed / "data" / "text-index").glob("*.json"))
+    meta = meta_path.read_text(encoding="utf-8").replace(f'"version": {INDEX_VERSION}', '"version": 0')
+    meta_path.write_text(meta, encoding="utf-8")
+    assert lookup_text(path) is None
+    save_extracted(path, "OLDVERSION")
+    assert lookup_text(path) == "OLDVERSION"
 
 
 def test_schedule_save_writes_in_the_background(indexed: Path):

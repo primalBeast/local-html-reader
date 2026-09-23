@@ -2,7 +2,8 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Local HTML Reader
-if exist "%~dp0lhr\assets\splash.hta" start "" mshta.exe "%~dp0lhr\assets\splash.hta"
+REM Splash is started by start-webview.vbs, or by Python if this cmd is run alone.
+REM Starting it here as well closed the first splash and opened a second one.
 
 REM Minimize THIS console (do not hide it). Logs stay in the window; restore from the taskbar.
 powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\minimize-console.ps1"

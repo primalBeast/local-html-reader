@@ -8,7 +8,6 @@
   BORDER="none"
   CAPTION="no"
   SHOWINTASKBAR="yes"
-  SINGLEINSTANCE="yes"
   SYSMENU="no"
   SCROLL="no"
   ICON="app.ico"
@@ -50,18 +49,29 @@ function place() {
     Math.max(0, (screen.availHeight - h) / 2)
   );
 }
+function clearOwner() {
+  try {
+    var fso = new ActiveXObject("Scripting.FileSystemObject");
+    var owner = fso.GetSpecialFolder(2) + "\\lhr-splash.owner";
+    if (fso.FileExists(owner)) fso.DeleteFile(owner, true);
+  } catch (e) {}
+}
 function closeIfSignaled() {
   try {
     var fso = new ActiveXObject("Scripting.FileSystemObject");
     var marker = fso.GetSpecialFolder(2) + "\\lhr-splash.close";
     if (fso.FileExists(marker)) {
       try { fso.DeleteFile(marker, true); } catch (e) {}
+      clearOwner();
       window.close();
       return;
     }
   } catch (e) {}
   elapsed += 200;
-  if (elapsed >= 90000) window.close();
+  if (elapsed >= 90000) {
+    clearOwner();
+    window.close();
+  }
 }
 window.onload = function () {
   place();

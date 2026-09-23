@@ -174,11 +174,15 @@
         tabindex="-1"
         role="treeitem"
         aria-selected={isSelected(node)}
-        style={`padding-left: ${24 + depth * 14}px`}
+        style={`padding-left: ${node.match_count ? 4 : 24 + depth * 14}px`}
         onclick={() => openFile(node)}
         oncontextmenu={(e) => onPathMenu?.(e, node)}
-        title={`${node.rel} (${formatMb(node.size)})`}
+        title={`${node.rel} (${formatMb(node.size)})${node.match_count ? `, ${node.match_count} matches` : ''}`}
       >
+        {#if node.match_count}
+          <span class="file-matches">{node.match_count}</span>
+          <span class="file-indent" style={`width: ${depth * 14}px`}></span>
+        {/if}
         <span class="file-name">{node.name}</span>
         {#if openingKey === `${node.root_id}:${node.rel}`}
           <span class="file-open-spinner" role="status" aria-label="Loading file"></span>

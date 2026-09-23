@@ -19,6 +19,9 @@ from pathlib import Path
 
 logger = logging.getLogger("lhr.text_index")
 
+# Bump when the extracted-text algorithm changes. Older cache files are rebuilt.
+INDEX_VERSION = 2
+
 _SAVE_QUEUE: queue.Queue[tuple[Path, str]] = queue.Queue()
 _WRITER_LOCK = threading.Lock()
 _SEARCH_LOCK = threading.Lock()
@@ -82,10 +85,21 @@ def _read_meta(path: Path) -> dict | None:
         return None
 
 
-def _fresh(path: Path, meta: dict, st: os.stat_result) -> bool:
+def _version_ok(meta: dict) -> bool:
+    try:
+        return int(meta.get("version") or 0) >= INDEX_VERSION
+    except (TypeError, ValueError):
+        return False
+
+
+def _stat_matches(meta: dict, st: os.stat_result) -> bool:
     return int(meta.get("size") or -1) == int(st.st_size) and int(meta.get("mtime_ns") or -1) == int(
         st.st_mtime_ns
     )
+
+
+def _fresh(path: Path, meta: dict, st: os.stat_result) -> bool:
+    return _version_ok(meta) and _stat_matches(meta, st)
 
 
 def lookup_text(path: Path) -> str | None:
@@ -125,13 +139,14 @@ def save_extracted(path: Path, text: str) -> None:
     if digest is None:
         return
     again = _stat(path)
-    if again is None or not _fresh(path, {"size": st.st_size, "mtime_ns": st.st_mtime_ns}, again):
+    if again is None or not _stat_matches({"size": st.st_size, "mtime_ns": st.st_mtime_ns}, again):
         return
     key = _key(path)
     folder = index_dir()
     text_tmp = folder / f"{key}.txt.tmp"
     meta_tmp = folder / f"{key}.json.tmp"
     payload = {
+        "version": INDEX_VERSION,
         "path": str(path),
         "size": int(again.st_size),
         "mtime_ns": int(again.st_mtime_ns),

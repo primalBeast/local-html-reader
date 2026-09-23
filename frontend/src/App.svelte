@@ -34,13 +34,113 @@
   let selected = $state<DocumentHit | null>(null);
   let openingKey = $state<string | null>(null);
   let loadedKey = $state<string | null>(null);
+  let pageSummary = $state('');
   let loading = $state(true);
   let error = $state<string | null>(null);
   let version = $state('');
+  let serverOk = $state(true);
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 2;
+  let uiZoom = $state(readStoredZoom());
+
+  function readStoredZoom(): number {
+    try {
+      const n = Number(localStorage.getItem('lhr-ui-zoom'));
+      if (Number.isFinite(n)) return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, n));
+    } catch {
+      /* ignore */
+    }
+    return 1;
+  }
+
+  function clampZoom(value: number): number {
+    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+  }
+
+  function setUiZoom(value: number) {
+    uiZoom = clampZoom(value);
+    try {
+      localStorage.setItem('lhr-ui-zoom', String(uiZoom));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function zoomFromPointerScrub(startZoom: number, dx: number, dy: number): number {
+    return clampZoom(startZoom * Math.exp((dx - dy) * 0.008));
+  }
+
+  function zoomFromWheelDelta(oldZoom: number, deltaY: number, deltaMode = 0): number {
+    let dy = deltaY;
+    if (deltaMode === 1) dy *= 16;
+    if (deltaMode === 2) dy *= 800;
+    return clampZoom(oldZoom * Math.exp(-dy * 0.0015));
+  }
+
+  const zoomScrub = {
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    startZoom: 1,
+    dragging: false,
+  };
+
+  function endZoomScrub() {
+    zoomScrub.pointerId = -1;
+    zoomScrub.dragging = false;
+    document.body.classList.remove('lhr-zoom-scrubbing');
+    window.removeEventListener('pointermove', onZoomScrubMove, true);
+    window.removeEventListener('pointerup', onZoomScrubUp, true);
+    window.removeEventListener('pointercancel', onZoomScrubUp, true);
+  }
+
+  function onZoomReadoutPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    zoomScrub.pointerId = e.pointerId;
+    zoomScrub.startX = e.clientX;
+    zoomScrub.startY = e.clientY;
+    zoomScrub.startZoom = uiZoom;
+    zoomScrub.dragging = false;
+    window.addEventListener('pointermove', onZoomScrubMove, true);
+    window.addEventListener('pointerup', onZoomScrubUp, true);
+    window.addEventListener('pointercancel', onZoomScrubUp, true);
+  }
+
+  function onZoomScrubMove(e: PointerEvent) {
+    if (e.pointerId !== zoomScrub.pointerId) return;
+    const dx = e.clientX - zoomScrub.startX;
+    const dy = e.clientY - zoomScrub.startY;
+    if (!zoomScrub.dragging && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    zoomScrub.dragging = true;
+    document.body.classList.add('lhr-zoom-scrubbing');
+    e.preventDefault();
+    setUiZoom(zoomFromPointerScrub(zoomScrub.startZoom, dx, dy));
+  }
+
+  function onZoomScrubUp(e: PointerEvent) {
+    if (e.pointerId !== zoomScrub.pointerId) return;
+    endZoomScrub();
+  }
+
+  function onZoomWheel(e: WheelEvent) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setUiZoom(zoomFromWheelDelta(uiZoom, e.deltaY, e.deltaMode));
+  }
   let inWebview = $state(false);
 
   let menuOpen = $state(false);
-  let pathMenu = $state<{ x: number; y: number; full: string; rel: string } | null>(null);
+  let pathMenu = $state<{
+    x: number;
+    y: number;
+    full: string;
+    rel: string;
+    file: boolean;
+    rootId: string;
+    relApi: string;
+  } | null>(null);
   let projectMenu = $state<{ x: number; y: number; slug: string; name: string } | null>(null);
   let projectActionSlug = $state<string | null>(null);
   let folderDialog = $state(false);
@@ -245,6 +345,19 @@
     const mb = (bytes ?? 0) / (1024 * 1024);
     if (mb < 1) return `${mb.toFixed(1)} MB`;
     return `${Math.round(mb)} MB`;
+  }
+
+  function formatPages(count: number, estimated: boolean): string {
+    const n = Math.max(1, Math.round(count));
+    const word = n === 1 ? 'page' : 'pages';
+    return estimated ? `about ${n} ${word}` : `${n} ${word}`;
+  }
+
+  function estimatePrintedPages(doc: Document): number {
+    const text = (doc.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!text) return 1;
+    // A single-spaced US Letter page holds about 3,000 characters.
+    return Math.max(1, Math.ceil(text.length / 3000));
   }
 
   async function refreshTree() {
@@ -511,6 +624,7 @@
     const key = docKey(doc);
     if (loadedKey === key || openingKey === key) return;
     openingKey = key;
+    pageSummary = '';
     const fromHtml = selected && !isPdfHit(selected);
     if (isPdfHit(doc) && fromHtml) heldHtml = selected;
     else if (!isPdfHit(doc)) heldHtml = null;
@@ -874,6 +988,13 @@
     const readyKey = iframeEl?.dataset.readyKey;
     if (selected && !isPdfHit(selected) && readyKey && readyKey === docKey(selected)) {
       clearOpening(selected);
+      const shown = iframeDoc();
+      if (shown) {
+        requestAnimationFrame(() => {
+          if (!selected || isPdfHit(selected) || docKey(selected) !== readyKey) return;
+          pageSummary = formatPages(estimatePrintedPages(shown), true);
+        });
+      }
     }
     iframeCopyCleanup?.();
     iframeCopyCleanup = null;
@@ -922,6 +1043,12 @@
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
+  function onPdfPageCount(pages: number, src: string) {
+    if (!selected || !isPdfHit(selected)) return;
+    if (viewUrl(selected.root_id, selected.rel) !== src) return;
+    pageSummary = formatPages(pages, false);
+  }
+
   function onPdfSettled(src: string) {
     if (!selected || !isPdfHit(selected)) return;
     if (viewUrl(selected.root_id, selected.rel) !== src) return;
@@ -932,6 +1059,21 @@
   function onKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
     const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+    if ((event.ctrlKey || event.metaKey) && (event.key === '=' || event.key === '+' || event.key === 'Add')) {
+      event.preventDefault();
+      setUiZoom(uiZoom * 1.12);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key === '-' || event.key === '_' || event.key === 'Subtract')) {
+      event.preventDefault();
+      setUiZoom(uiZoom / 1.12);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key === '0' || event.key === 'Numpad0')) {
+      event.preventDefault();
+      setUiZoom(1);
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && selected) {
       event.preventDefault();
       pageFindInput?.focus();
@@ -993,7 +1135,7 @@
     if (!(t instanceof Element)) return false;
     return Boolean(
       t.closest(
-        'button, a, input, select, textarea, .window-chrome, .win-resize, .menu, .search-wrap, .path-menu',
+        'button, a, input, select, textarea, .zoom-readout, .window-chrome, .win-resize, .menu, .search-wrap, .path-menu',
       ),
     );
   }
@@ -1025,7 +1167,13 @@
     void webviewApi()?.toggle_maximize?.();
   }
 
-  function openPathMenu(event: MouseEvent, rootPath: string, rel: string) {
+  function openPathMenu(
+    event: MouseEvent,
+    rootPath: string,
+    rel: string,
+    file = false,
+    rootId = '',
+  ) {
     event.preventDefault();
     event.stopPropagation();
     pathMenu = {
@@ -1033,7 +1181,21 @@
       y: event.clientY,
       full: windowsFullPath(rootPath, rel),
       rel: windowsRelPath(rel),
+      file,
+      rootId,
+      relApi: rel,
     };
+  }
+
+  async function launchMenuFile() {
+    const menu = pathMenu;
+    pathMenu = null;
+    if (!menu?.file || !menu.rootId) return;
+    try {
+      await api.launchDocument(menu.rootId, menu.relApi);
+    } catch {
+      /* the default app reports its own errors */
+    }
   }
 
   $effect(() => {
@@ -1043,8 +1205,20 @@
     void loadHtmlFrame(doc, el);
   });
 
+  async function pingServer() {
+    try {
+      const health = await api.health();
+      serverOk = health.status === 'ok';
+      if (health.version) version = health.version;
+    } catch {
+      serverOk = false;
+    }
+  }
+
   onMount(() => {
     void boot();
+    void pingServer();
+    const healthTick = setInterval(() => void pingServer(), 4000);
     const stopWatch = api.watchSettings(applySharedSettings);
     const onResize = () => {
       sidebarWidth = clampSidebar(sidebarWidth);
@@ -1061,13 +1235,17 @@
     window.addEventListener('keydown', onKeydown);
     window.addEventListener('click', onWindowClick);
     window.addEventListener('resize', onResize);
+    window.addEventListener('wheel', onZoomWheel, { passive: false });
     return () => {
       iframeCopyCleanup?.();
       stopWatch();
+      clearInterval(healthTick);
       clearInterval(webviewTick);
+      endZoomScrub();
       window.removeEventListener('keydown', onKeydown);
       window.removeEventListener('click', onWindowClick);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('wheel', onZoomWheel);
     };
   });
 </script>
@@ -1159,7 +1337,27 @@
       </div>
     </div>
     <div class="topbar-spacer" title="Drag to move. Double-click to maximize"></div>
-    <div class="status">v{version || '…'} · 127.0.0.1:8766</div>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <span
+      class="zoom-readout"
+      title="Drag to zoom. Double-click to reset to 100%"
+      onpointerdown={onZoomReadoutPointerDown}
+      ondblclick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setUiZoom(1);
+      }}
+    >zoom {(uiZoom * 100).toFixed(0)}%</span>
+    <div class="status">
+      <span>v{version || '…'}</span>
+      <span
+        class="server-dot"
+        class:ok={serverOk}
+        class:down={!serverOk}
+        title={serverOk ? 'Connected to server' : 'Server disconnected'}
+        aria-label={serverOk ? 'Connected to server' : 'Server disconnected'}
+      ></span>
+    </div>
     {#if inWebview}
       <div class="window-chrome" role="group" aria-label="Window">
         <button
@@ -1198,7 +1396,7 @@
     class="layout"
     class:dragging
     bind:this={layoutEl}
-    style={`grid-template-columns: ${sidebarWidth}px 6px minmax(0, 1fr)`}
+    style={`grid-template-columns: ${sidebarWidth}px 6px minmax(0, 1fr); zoom: ${uiZoom}; width: ${100 / uiZoom}%; height: ${100 / uiZoom}%;`}
   >
     <section class="pane sidebar">
       <div class="pane-head">
@@ -1274,7 +1472,8 @@
             {selected}
             {openingKey}
             onOpen={openDoc}
-            onPathMenu={(e, node) => openPathMenu(e, node.root_path, node.rel)}
+            onPathMenu={(e, node) =>
+              openPathMenu(e, node.root_path, node.rel, node.kind === 'file', node.root_id)}
           />
         {/if}
       </div>
@@ -1307,14 +1506,19 @@
     <section class="viewer">
       {#if selected}
         <div class="viewer-bar">
-          <code
-            class="doc-path"
-            title={windowsFullPath(selected.root_path, selected.rel)}
-            oncontextmenu={(e) => {
-              if (!selected) return;
-              openPathMenu(e, selected.root_path, selected.rel);
-            }}
-          >{windowsRelPath(selected.rel)}</code>
+          <div class="doc-heading">
+            <code
+              class="doc-path"
+              title={windowsFullPath(selected.root_path, selected.rel)}
+              oncontextmenu={(e) => {
+                if (!selected) return;
+                openPathMenu(e, selected.root_path, selected.rel);
+              }}
+            >{windowsRelPath(selected.rel)}</code>
+            {#if pageSummary}
+              <div class="doc-pages">{pageSummary}</div>
+            {/if}
+          </div>
           <div class="page-finds">
             <form
               class="page-find list-find"
@@ -1434,6 +1638,7 @@
               overlay={Boolean(heldHtml)}
               onReady={onPdfReady}
               onSettled={onPdfSettled}
+              onPageCount={onPdfPageCount}
             />
           {/if}
         </div>
@@ -1560,6 +1765,8 @@
     y={pathMenu.y}
     full={pathMenu.full}
     rel={pathMenu.rel}
+    file={pathMenu.file}
+    onLaunch={() => void launchMenuFile()}
     onClose={() => {
       pathMenu = null;
     }}

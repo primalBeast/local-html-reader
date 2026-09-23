@@ -42,6 +42,7 @@ export type TreeNode = {
   root_path: string;
   size?: number;
   mtime?: number;
+  match_count?: number;
   children?: TreeNode[];
 };
 
@@ -166,6 +167,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
+  launchDocument: (rootId: string, rel: string) =>
+    request<{ ok: boolean }>('/api/documents/launch', {
+      method: 'POST',
+      body: JSON.stringify({ root_id: rootId, rel }),
+    }),
   settings: () => request<Settings>('/api/settings'),
   patchSettings: (body: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(body) }),

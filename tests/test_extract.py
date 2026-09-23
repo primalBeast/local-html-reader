@@ -6,7 +6,7 @@ from zipfile import ZipFile
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from lhr.extract import extract_search_text, literal_might_match, text_matches_query
+from lhr.extract import count_text_matches, extract_search_text, literal_might_match, text_matches_query
 
 
 def docx_bytes_with_text(text: str) -> bytes:
@@ -67,6 +67,12 @@ def test_text_matches_regex() -> None:
     assert text_matches_query("error code 404 and 500", r"\d{3}", regex=True)
     assert not text_matches_query("no digits here", r"\d{3}", regex=True)
     assert not text_matches_query("abc", r"[", regex=True)
+
+
+def test_count_text_matches_reports_each_hit() -> None:
+    assert count_text_matches("cat cat catalog", "cat", whole_word=True) == 2
+    assert count_text_matches("error 404 and 500", r"\d{3}", regex=True) == 2
+    assert count_text_matches("Account 0 4 4 1 4 7 J TFSA", "044147J") == 1
 
 
 def test_text_matches_case_and_whole_word() -> None:

@@ -5,6 +5,7 @@ import mimetypes
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from lhr import documents
@@ -116,6 +117,30 @@ def document_tree_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class LaunchBody(BaseModel):
+    root_id: str
+    rel: str
+
+
+@router.post("/api/documents/launch")
+def launch_document(body: LaunchBody, project: str | None = Query(default=None)) -> dict:
+    try:
+        path = documents.resolve_document(body.root_id, body.rel, project=project)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    try:
+        documents.launch_in_default_app(path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="could not launch file") from exc
+    return {"ok": True}
 
 
 @router.get("/view/{root_id}/{rel_path:path}")

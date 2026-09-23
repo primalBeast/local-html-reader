@@ -21,6 +21,8 @@ def test_branding_assets_exist():
     assert SPLASH_TITLE in text
     assert "splash.png" in text
     assert "lhr-splash.close" in text
+    assert "lhr-splash.owner" in text
+    assert "SINGLEINSTANCE" not in text
     assert APP_USER_MODEL_ID == "primalBeast.LocalHtmlReader"
 
 
