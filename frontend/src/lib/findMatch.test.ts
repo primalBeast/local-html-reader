@@ -14,6 +14,27 @@ describe('textSlices', () => {
 });
 
 describe('hitsInText', () => {
+  it('does not let a dot cross line breaks', () => {
+    expect(hitsInText('a\nb', 'a.*b', { regex: true })).toEqual([]);
+    expect(hitsInText('a\rb', 'a.*b', { regex: true })).toEqual([]);
+    expect(hitsInText('a\u2028b', 'a.*b', { regex: true })).toEqual([]);
+    expect(hitsInText('axb', 'a.*b', { regex: true })).toEqual([{ start: 0, end: 3 }]);
+  });
+
+  it('treats letters, digits, and underscore as whole-word characters', () => {
+    expect(hitsInText('cat2', 'cat', { wholeWord: true })).toEqual([]);
+    expect(hitsInText('cat_dog', 'cat', { wholeWord: true })).toEqual([]);
+    expect(hitsInText('the cat.', 'cat', { wholeWord: true })).toEqual([{ start: 4, end: 7 }]);
+    expect(hitsInText('cat cat catalog', 'cat', { wholeWord: true })).toEqual([
+      { start: 0, end: 3 },
+      { start: 4, end: 7 },
+    ]);
+  });
+
+  it('stops at 8000 hits', () => {
+    expect(hitsInText('a'.repeat(9000), 'a', {})).toHaveLength(8000);
+  });
+
   it('finds a literal inside one slice the way workers stitch offsets', () => {
     const text = `${'a'.repeat(100)}65C0138E${'b'.repeat(100)}`;
     const slices = textSlices(text.length, 4, 8);

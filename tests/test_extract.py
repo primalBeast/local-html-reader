@@ -69,6 +69,33 @@ def test_text_matches_regex() -> None:
     assert not text_matches_query("abc", r"[", regex=True)
 
 
+def test_regex_dot_does_not_cross_lines() -> None:
+    assert count_text_matches("a\nb", "a.*b", regex=True) == 0
+    assert count_text_matches("a\rb", "a.*b", regex=True) == 0
+    assert count_text_matches("a\u2028b", "a.*b", regex=True) == 0
+    assert count_text_matches("axb", "a.*b", regex=True) == 1
+    assert count_text_matches("a.b", r"a\.b", regex=True) == 1
+    assert count_text_matches("axb", r"a\.b", regex=True) == 0
+    assert count_text_matches("a.b", "a[.]b", regex=True) == 1
+    assert count_text_matches("axb", "a[.]b", regex=True) == 0
+
+
+def test_whole_word_treats_digits_and_underscore_as_word_characters() -> None:
+    assert count_text_matches("cat2", "cat", whole_word=True) == 0
+    assert count_text_matches("cat_dog", "cat", whole_word=True) == 0
+    assert count_text_matches("the cat.", "cat", whole_word=True) == 1
+    assert count_text_matches("cat cat catalog", "cat", whole_word=True) == 2
+
+
+def test_query_spaces_are_not_stripped() -> None:
+    assert count_text_matches("foobar", "foo bar") == 0
+    assert count_text_matches("foo bar", "foo bar") == 1
+
+
+def test_match_count_caps_at_8000() -> None:
+    assert count_text_matches("a" * 9000, "a") == 8000
+
+
 def test_count_text_matches_reports_each_hit() -> None:
     assert count_text_matches("cat cat catalog", "cat", whole_word=True) == 2
     assert count_text_matches("error 404 and 500", r"\d{3}", regex=True) == 2

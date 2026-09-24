@@ -73,52 +73,85 @@ def count_text_matches(
     if not match_case:
         flags |= re.IGNORECASE
     if regex:
-        source = raw
-        flags |= re.DOTALL
+        # Same as the right pane: "." does not cross line breaks.
+        source = _js_dot(raw)
     else:
         source = re.escape(raw)
     if whole_word:
-        source = rf"(?<![\w])(?:{source})(?![\w])"
+        # Letters, digits, and underscore — same boundary as the right pane.
+        source = rf"(?<!\w)(?:{source})(?!\w)"
     try:
         pat = re.compile(source, flags)
     except re.error:
         return 0
     return count_query_matches(
         text,
-        raw,
         pat,
         regex=regex,
-        match_case=match_case,
         whole_word=whole_word,
     )
 
 
+# Right-pane find stops at 8,000 hits. Keep the badge on the same ceiling.
+_MATCH_CAP = 8000
+
+
+def _js_dot(pattern: str) -> str:
+    """Unescaped "." skips \\n, \\r, U+2028, and U+2029, matching the right pane."""
+    dot = "[^\\n\\r\u2028\u2029]"
+    out: list[str] = []
+    i = 0
+    n = len(pattern)
+    in_class = False
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < n:
+            out.append(pattern[i : i + 2])
+            i += 2
+            continue
+        if ch == "[" and not in_class:
+            in_class = True
+            out.append(ch)
+            i += 1
+            if i < n and pattern[i] == "^":
+                out.append("^")
+                i += 1
+            if i < n and pattern[i] == "]":
+                out.append("]")
+                i += 1
+            continue
+        if ch == "]" and in_class:
+            in_class = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "." and not in_class:
+            out.append(dot)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def count_query_matches(
     text: str,
-    raw: str,
     pat: re.Pattern[str],
     *,
     regex: bool,
-    match_case: bool,
     whole_word: bool,
 ) -> int:
     """How many times the query occurs, using the same rules as a hit."""
     count = _count_pattern(pat, text)
-    if count or whole_word:
+    if count or whole_word or regex:
         return count
+    # PDF extractors sometimes emit "0 4 4 1 4 7 J" for a word the viewer shows
+    # as "044147J". Only use that collapsed text when the plain text has no hit,
+    # so a normal literal count stays the same as the open document.
     collapsed = _collapse_glyph_spaces(text)
-    if collapsed != text:
-        count = _count_pattern(pat, collapsed)
-        if count:
-            return count
-    if regex:
+    if collapsed == text:
         return 0
-    compact_q = "".join(raw.split())
-    if not compact_q or compact_q == raw:
-        return 0
-    hay = collapsed if match_case else collapsed.lower()
-    probe = compact_q if match_case else compact_q.lower()
-    return _count_substring(hay, probe)
+    return _count_pattern(pat, collapsed)
 
 
 def _count_pattern(pat: re.Pattern[str], text: str) -> int:
@@ -127,21 +160,9 @@ def _count_pattern(pat: re.Pattern[str], text: str) -> int:
         if match.end() == match.start():
             continue
         count += 1
+        if count >= _MATCH_CAP:
+            return _MATCH_CAP
     return count
-
-
-def _count_substring(hay: str, probe: str) -> int:
-    if not probe:
-        return 0
-    count = 0
-    start = 0
-    step = max(1, len(probe))
-    while True:
-        found = hay.find(probe, start)
-        if found < 0:
-            return count
-        count += 1
-        start = found + step
 
 
 def literal_might_match(path: Path, needle: str, *, match_case: bool = False) -> bool:

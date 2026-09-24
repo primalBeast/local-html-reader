@@ -28,6 +28,7 @@
   let pageMatchCase = $state(false);
   let pageWholeWord = $state(false);
   let appliedQuery = $state('');
+  let appliedFlags = $state('');
   let searching = $state(false);
   let searchHistory = $state<SearchHistoryItem[]>([]);
   let pageHistory = $state<SearchHistoryItem[]>([]);
@@ -337,6 +338,62 @@
     return `${Math.round(mb)} MB`;
   }
 
+  function libraryStats(nodes: TreeNode[]): { files: number; bytes: number } {
+    let files = 0;
+    let bytes = 0;
+    const walk = (list: TreeNode[]) => {
+      for (const node of list) {
+        if (node.kind === 'file') {
+          files += 1;
+          bytes += node.size || 0;
+        } else if (node.children) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(nodes);
+    return { files, bytes };
+  }
+
+  function withMatchCount(nodes: TreeNode[], rootId: string, rel: string, count: number): TreeNode[] {
+    return nodes.map((node) => {
+      if (node.kind === 'file' && node.root_id === rootId && node.rel === rel) {
+        return { ...node, match_count: count };
+      }
+      if (node.children) return { ...node, children: withMatchCount(node.children, rootId, rel, count) };
+      return node;
+    });
+  }
+
+  function matchCountOf(nodes: TreeNode[], rootId: string, rel: string): number | null {
+    for (const node of nodes) {
+      if (node.kind === 'file' && node.root_id === rootId && node.rel === rel) {
+        return node.match_count || 0;
+      }
+      if (node.children) {
+        const found = matchCountOf(node.children, rootId, rel);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  }
+
+  function syncOpenFileMatchCount() {
+    if (!selected || !appliedQuery) return;
+    const leftFlags = searchFlagKey(treeRegex, treeMatchCase, treeWholeWord);
+    let count: number | null = null;
+    if (countedListQuery === appliedQuery && countedListFlags === leftFlags) {
+      count = listMarks.length;
+    }
+    if (countedPageQuery === appliedQuery && countedPageFlags === leftFlags) {
+      count = pageMarks.length;
+    }
+    if (count === null) return;
+    const current = matchCountOf(tree, selected.root_id, selected.rel);
+    if (current === null || current === count) return;
+    tree = withMatchCount(tree, selected.root_id, selected.rel, count);
+  }
+
   function formatPages(count: number, estimated: boolean): string {
     const n = Math.max(1, Math.round(count));
     const word = n === 1 ? 'page' : 'pages';
@@ -352,13 +409,15 @@
 
   async function refreshTree() {
     const q = query.trim();
-    appliedQuery = q;
+    const flags = searchFlagKey(treeRegex, treeMatchCase, treeWholeWord);
     const gen = ++searchGen;
     treeAbort?.abort();
     treeAbort = new AbortController();
     const signal = treeAbort.signal;
     searching = Boolean(q);
     if (q) {
+      appliedQuery = q;
+      appliedFlags = flags;
       fileCount = 0;
       tree = [];
       truncated = false;
@@ -370,6 +429,8 @@
       if (!q) {
         const data = await api.tree();
         if (gen !== searchGen) return;
+        appliedQuery = '';
+        appliedFlags = '';
         tree = data.tree;
         fileCount = data.file_count;
         truncated = data.truncated;
@@ -380,7 +441,10 @@
         (n, nextTree, workers) => {
           if (gen !== searchGen) return;
           fileCount = n;
-          if (nextTree) tree = nextTree;
+          if (nextTree) {
+            tree = nextTree;
+            syncOpenFileMatchCount();
+          }
           if (workers) {
             searchWorkers = [...workers].sort((a, b) => b.size - a.size || a.slot - b.slot);
           }
@@ -390,6 +454,7 @@
       );
       if (gen !== searchGen) return;
       tree = data.tree;
+      syncOpenFileMatchCount();
       fileCount = data.file_count;
       truncated = data.truncated;
     } catch (err) {
@@ -685,10 +750,15 @@
     query = value;
   }
 
+  function searchFlagKey(regex: boolean, matchCase: boolean, wholeWord: boolean): string {
+    return `${regex ? 1 : 0}${matchCase ? 1 : 0}${wholeWord ? 1 : 0}`;
+  }
+
   function commitTreeSearch(value?: string) {
     if (typeof value === 'string') query = value;
     const next = query.trim();
-    if (next === appliedQuery) {
+    const flags = searchFlagKey(treeRegex, treeMatchCase, treeWholeWord);
+    if (next === appliedQuery && flags === appliedFlags) {
       listQuery = query;
       return;
     }
@@ -700,7 +770,6 @@
 
   function clearSearch() {
     query = '';
-    appliedQuery = '';
     listQuery = '';
     searching = false;
     searchGen += 1;
@@ -823,6 +892,24 @@
 
   let docFindTimer: ReturnType<typeof setTimeout> | undefined;
   let docFindGen = 0;
+  let countedListQuery = '';
+  let countedPageQuery = '';
+  let countedListFlags = '';
+  let countedPageFlags = '';
+
+  function forgetFindCounts() {
+    countedListQuery = '';
+    countedPageQuery = '';
+    countedListFlags = '';
+    countedPageFlags = '';
+  }
+
+  function noteFindCounts() {
+    countedListQuery = listQuery.trim();
+    countedPageQuery = pageQuery.trim();
+    countedListFlags = searchFlagKey(treeRegex, treeMatchCase, treeWholeWord);
+    countedPageFlags = searchFlagKey(pageRegex, pageMatchCase, pageWholeWord);
+  }
 
   async function runAllFinds(focusList = false, gen = docFindGen) {
     const doc = findRoot();
@@ -877,6 +964,8 @@
     pageMarks = found.page;
     listMatchCount = found.list.length;
     pageMatchCount = found.page.length;
+    noteFindCounts();
+    syncOpenFileMatchCount();
     const scrollList = Boolean(listMarks.length) && (focusList || !pageQuery.trim());
     const scrollPage = Boolean(pageMarks.length) && !scrollList;
     if (listMarks.length) {
@@ -893,6 +982,7 @@
 
   function scheduleDocFind(focusList: boolean, which: 'list' | 'page' | 'both') {
     const gen = ++docFindGen;
+    forgetFindCounts();
     if (which === 'list' || which === 'both') {
       listFinding = Boolean(listQuery.trim());
       listFindParallel = false;
@@ -1424,16 +1514,20 @@
             else if (listQuery.trim()) commitListSearch();
           }}
         />
-        {#if searching || appliedQuery}
-          <div class="muted">
-            {#if searching}
-              Searching… {fileCount} matching file{fileCount === 1 ? '' : 's'}
-            {:else}
-              {fileCount} matching file{fileCount === 1 ? '' : 's'}
-              {#if truncated} (truncated){/if}
-            {/if}
-          </div>
-        {/if}
+        <div class="muted">
+          {#if searching}
+            Searching… {fileCount} matching file{fileCount === 1 ? '' : 's'}
+          {:else if appliedQuery}
+            {fileCount} matching file{fileCount === 1 ? '' : 's'}
+            {#if truncated} (truncated){/if}
+          {:else if loading}
+            Loading…
+          {:else}
+            {@const stats = libraryStats(tree)}
+            {stats.files} file{stats.files === 1 ? '' : 's'} · {formatMb(stats.bytes)}
+            {#if truncated} (truncated){/if}
+          {/if}
+        </div>
       </div>
       {#if error && !folderDialog}
         <div class="error">{error}</div>
