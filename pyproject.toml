@@ -1,7 +1,7 @@
 [project]
 name = "local-html-reader"
 version = "0.1.0"
-description = "Local-first web app for reading HTML documents on disk"
+description = "Local-first web app for reading documents on disk"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

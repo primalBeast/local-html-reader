@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from lhr import documents
+from lhr.extract import DOCX_SUFFIXES, EXTRA_SUFFIXES, HTML_SUFFIXES, MARKDOWN_SUFFIXES, PDF_SUFFIXES
 from lhr.paths import PathEscapeError
 
 router = APIRouter(tags=["documents"])
@@ -159,7 +160,7 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
         raise HTTPException(status_code=404, detail="file not found")
 
     suffix = path.suffix.lower()
-    if suffix in {".md", ".markdown"}:
+    if suffix in MARKDOWN_SUFFIXES:
         from lhr.md_view import markdown_to_html_page
 
         try:
@@ -168,13 +169,13 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
             raise HTTPException(status_code=404, detail="file not found") from exc
         return HTMLResponse(markdown_to_html_page(path.name, raw))
 
-    if suffix in {".docx", ".dotx"}:
+    if suffix in DOCX_SUFFIXES:
         from lhr.docx_view import docx_to_html_page
 
         return HTMLResponse(docx_to_html_page(path.name, path))
 
     media, _enc = mimetypes.guess_type(str(path))
-    if suffix in {".html", ".htm"}:
+    if suffix in HTML_SUFFIXES:
         # No filename= — Edge blocks iframe documents with Content-Disposition filename
         # ("This page has been blocked by Microsoft Edge"), so in-page search sees no text.
         return FileResponse(
@@ -182,12 +183,16 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
             media_type="text/html; charset=utf-8",
             headers={"Content-Disposition": "inline"},
         )
-    if suffix == ".pdf":
+    if suffix in PDF_SUFFIXES:
         return FileResponse(
             path,
             media_type="application/pdf",
             headers={"Content-Disposition": "inline"},
         )
+    if suffix in EXTRA_SUFFIXES:
+        from lhr.extra_view import render_extra
+
+        return HTMLResponse(render_extra(path))
     return FileResponse(
         path,
         media_type=media or "application/octet-stream",
