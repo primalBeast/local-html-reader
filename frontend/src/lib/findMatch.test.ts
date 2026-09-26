@@ -31,8 +31,8 @@ describe('hitsInText', () => {
     ]);
   });
 
-  it('stops at 8000 hits', () => {
-    expect(hitsInText('a'.repeat(9000), 'a', {})).toHaveLength(8000);
+  it('stops at 32000 hits', () => {
+    expect(hitsInText('a'.repeat(33000), 'a', {})).toHaveLength(32000);
   });
 
   it('finds a literal inside one slice the way workers stitch offsets', () => {

@@ -1225,3 +1225,65 @@ iframe.doc-frame.viewer-under {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+
+.modal.help-modal {
+  width: min(720px, calc(100vw - 1.5rem));
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.95rem 1.05rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-head h2 {
+  margin: 0;
+}
+
+.help-scroll {
+  overflow: auto;
+  padding: 0.85rem 1.05rem 1.1rem;
+}
+
+.help-shared,
+.help-format ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.help-shared li,
+.help-format li,
+.help-skipped {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.help-format {
+  border-top: 1px solid var(--border);
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+}
+
+.help-format h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.help-modal .help-ext {
+  margin: 0.2rem 0 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.help-modal .help-skipped {
+  margin: 0.9rem 0 0;
+}

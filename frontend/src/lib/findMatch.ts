@@ -1,6 +1,9 @@
 export type FindFlags = { regex?: boolean; matchCase?: boolean; wholeWord?: boolean };
 export type TextHit = { start: number; end: number };
 
+/** Keep in sync with lhr.limits.MATCH_CAP. */
+export const FIND_HIT_CAP = 32000;
+
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -26,7 +29,7 @@ export function hitsInText(text: string, query: string, flags: FindFlags): TextH
       continue;
     }
     hits.push({ start: match.index, end: match.index + match[0].length });
-    if (hits.length >= 8000) break;
+    if (hits.length >= FIND_HIT_CAP) break;
   }
   return hits;
 }

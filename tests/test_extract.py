@@ -92,8 +92,8 @@ def test_query_spaces_are_not_stripped() -> None:
     assert count_text_matches("foo bar", "foo bar") == 1
 
 
-def test_match_count_caps_at_8000() -> None:
-    assert count_text_matches("a" * 9000, "a") == 8000
+def test_match_count_caps_at_32000() -> None:
+    assert count_text_matches("a" * 33000, "a") == 32000
 
 
 def test_count_text_matches_reports_each_hit() -> None:

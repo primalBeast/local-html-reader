@@ -61,7 +61,7 @@ uv run lhr doctor
 Create a project from the top-left menu, then **+ Add folder…** and paste an absolute
 Windows path. The left pane lists supported documents in enabled folders
 (HTML, Markdown, PDF, Word, text, CSV, Excel, PowerPoint, RTF, OpenDocument, EPUB, notebooks, and a few other text formats).
-Click a file to open it in the right pane.
+Click a file to open it in the right pane. **Help** in the title bar lists every supported format and the limits for that format.
 
 Left search filters files whose **contents** match. Right-pane **Find in page** searches
 only the open document.

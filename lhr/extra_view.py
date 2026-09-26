@@ -20,6 +20,14 @@ from urllib.parse import unquote
 from zipfile import BadZipFile, ZipFile
 
 from lhr.html_text import html_visible_text
+from lhr.limits import (
+    MAX_CELL_CHARS,
+    MAX_COLUMN_REPEAT,
+    MAX_MEMBER_BYTES as _MAX_MEMBER_BYTES,
+    MAX_TABLE_COLS as _MAX_TABLE_COLS,
+    MAX_TABLE_ROWS as _MAX_TABLE_ROWS,
+    XML_PARSE_CAP as _XML_PARSE_CAP,
+)
 from lhr.page_html import VIEW_CHAR_CAP, html_page, pre_block
 from lhr.rtf_text import rtf_to_text
 
@@ -53,11 +61,6 @@ EXTRA_SUFFIXES = (
 
 # Visible text is a contiguous substring of the file bytes (no markup, no zip).
 PLAIN_BYTE_SUFFIXES = PLAIN_PRE_SUFFIXES | TABLE_SUFFIXES | JSON_SUFFIXES | IPYNB_SUFFIXES
-
-_MAX_TABLE_ROWS = 4000
-_MAX_TABLE_COLS = 60
-_MAX_MEMBER_BYTES = 32 * 1024 * 1024
-_XML_PARSE_CAP = 8 * 1024 * 1024
 
 _ODF_ROW_GROUPS = {"table-header-rows", "table-rows", "table-row-group"}
 
@@ -170,7 +173,7 @@ def _table_html(text: str, *, delimiter: str | None) -> str:
             if index >= _MAX_TABLE_ROWS:
                 truncated = True
                 break
-            rows.append([cell[:4000] for cell in row[:_MAX_TABLE_COLS]])
+            rows.append([cell[:MAX_CELL_CHARS] for cell in row[:_MAX_TABLE_COLS]])
     except csv.Error:
         return pre_block(text)
     if not rows:
@@ -377,7 +380,7 @@ def _render_odf_table(table_el: ET.Element) -> str:
             if _local(cell.tag) not in {"table-cell", "covered-table-cell"}:
                 continue
             try:
-                repeat = min(20, max(1, int(_attr(cell, "number-columns-repeated") or "1")))
+                repeat = min(MAX_COLUMN_REPEAT, max(1, int(_attr(cell, "number-columns-repeated") or "1")))
             except ValueError:
                 repeat = 1
             if _local(cell.tag) == "covered-table-cell":

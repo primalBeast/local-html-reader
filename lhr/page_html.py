@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html as html_lib
 
+from lhr.limits import VIEW_CHAR_CAP
+
 PAGE_CSS = (
     "body{font-family:Segoe UI,system-ui,sans-serif;max-width:52rem;"
     "margin:1.5rem auto;padding:0 1.25rem 3rem;line-height:1.55;color:#1a1a1a;}"
@@ -20,9 +22,6 @@ PAGE_CSS = (
     ".cell{margin:0 0 1rem;}"
     ".out{color:#333;}"
 )
-
-# Keep the iframe responsive. Search still reads the whole file up to the extract cap.
-VIEW_CHAR_CAP = 1_500_000
 
 
 def html_page(title: str, body: str) -> str:

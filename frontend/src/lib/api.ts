@@ -165,8 +165,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type HelpLimit = { label: string; detail: string };
+
+export type HelpFormat = {
+  name: string;
+  extensions: string[];
+  limits: string[];
+};
+
+export type HelpDocument = {
+  shared: HelpLimit[];
+  formats: HelpFormat[];
+  skipped: string;
+};
+
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
+  help: () => request<HelpDocument>('/api/help'),
   launchDocument: (rootId: string, rel: string) =>
     request<{ ok: boolean }>('/api/documents/launch', {
       method: 'POST',

@@ -9,11 +9,10 @@ from pathlib import Path
 
 from lhr.extra_view import EXTRA_SUFFIXES, PLAIN_BYTE_SUFFIXES, extract_extra_text
 from lhr.html_text import html_visible_text
+from lhr.limits import MATCH_CAP as _MATCH_CAP
+from lhr.limits import SEARCH_BYTES as MAX_SEARCH_BYTES
 
 logger = logging.getLogger("lhr.extract")
-
-# DocGen HTML exports are often 10–80 MiB. A lower cap made real pages unsearchable.
-MAX_SEARCH_BYTES = 128 * 1024 * 1024
 
 HTML_SUFFIXES = {".html", ".htm", ".xhtml"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
@@ -91,10 +90,6 @@ def count_text_matches(
         regex=regex,
         whole_word=whole_word,
     )
-
-
-# Right-pane find stops at 8,000 hits. Keep the badge on the same ceiling.
-_MATCH_CAP = 8000
 
 
 def _js_dot(pattern: str) -> str:

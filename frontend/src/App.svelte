@@ -8,6 +8,7 @@
   import PdfViewer from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
+  import HelpDialog from './lib/HelpDialog.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
 
   let roots = $state<Root[]>([]);
@@ -123,6 +124,7 @@
   let inWebview = $state(false);
 
   let menuOpen = $state(false);
+  let helpOpen = $state(false);
   let pathMenu = $state<{
     x: number;
     y: number;
@@ -1169,6 +1171,7 @@
     if (event.key === 'Escape') {
       pathMenu = null;
       projectMenu = null;
+      if (helpOpen) helpOpen = false;
       if (folderDialog) folderDialog = false;
       if (projectDialog) projectDialog = null;
       menuOpen = false;
@@ -1417,6 +1420,15 @@
       </div>
     </div>
     <div class="topbar-spacer" title="Drag to move. Double-click to maximize"></div>
+    <button
+      class="menu-btn"
+      type="button"
+      title="Supported formats and limits"
+      onclick={(e) => {
+        e.stopPropagation();
+        helpOpen = true;
+      }}
+    >Help</button>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <span
       class="zoom-readout"
@@ -1734,6 +1746,10 @@
     </section>
   </main>
 </div>
+
+{#if helpOpen}
+  <HelpDialog onClose={() => (helpOpen = false)} />
+{/if}
 
 {#if folderDialog}
   <div

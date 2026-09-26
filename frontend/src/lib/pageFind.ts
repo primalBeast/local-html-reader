@@ -261,7 +261,7 @@ function paintFrame(): Promise<void> {
   });
 }
 
-import { hitsInText, textSlices, workerCountFor, type FindFlags, type TextHit } from './findMatch';
+import { FIND_HIT_CAP, hitsInText, textSlices, workerCountFor, type FindFlags, type TextHit } from './findMatch';
 
 export type { FindFlags };
 
@@ -318,7 +318,7 @@ function searchText(
       }
       onActive?.(0);
       found.sort((a, b) => a.start - b.start);
-      resolve(found.slice(0, 8000));
+      resolve(found.slice(0, FIND_HIT_CAP));
     };
     const onError = () => finish(hitsInText(text, query, flags));
     const onMessage = (event: MessageEvent<{ id: number; hits: TextHit[] }>) => {
