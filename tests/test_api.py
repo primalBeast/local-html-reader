@@ -21,7 +21,7 @@ def docs_tree(tmp_path: Path) -> dict[str, Path]:
     (nested / "intro.htm").write_text(
         "<html><body>intro BETAUNIQUE</body></html>", encoding="utf-8"
     )
-    (nested / "notes.txt").write_text("not html", encoding="utf-8")
+    (nested / "notes.bin").write_text("not html", encoding="utf-8")
     outside = tmp_path / "secret.html"
     outside.write_text("<html>secret</html>", encoding="utf-8")
     return {"root": root, "outside": outside, "tmp": tmp_path}
@@ -44,6 +44,22 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, docs_tree: dict[str,
     app = create_app()
     with TestClient(app) as c:
         yield c
+
+
+def test_text_file_is_listed_and_rendered(client: TestClient, docs_tree: dict[str, Path]):
+    (docs_tree["root"] / "notes.txt").write_text("PLAINTEXTTOKEN in a note\n", encoding="utf-8")
+    added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    assert added.status_code == 200
+    rels = {d["rel"] for d in client.get("/api/documents").json()["documents"]}
+    assert "notes.txt" in rels
+    assert "guides/notes.bin" not in rels
+    root_id = client.get("/api/roots").json()["roots"][0]["id"]
+    viewed = client.get(f"/view/{root_id}/notes.txt")
+    assert viewed.status_code == 200
+    assert "html" in viewed.headers.get("content-type", "")
+    assert "PLAINTEXTTOKEN" in viewed.text
+    hits = client.get("/api/documents", params={"q": "PLAINTEXTTOKEN"}).json()["documents"]
+    assert {d["rel"] for d in hits} == {"notes.txt"}
 
 
 def test_side_by_side_page(client: TestClient):

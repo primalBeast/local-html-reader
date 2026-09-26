@@ -1,4 +1,4 @@
-"""Plain-text extraction for search: HTML, Markdown, PDF, and Word."""
+"""Plain-text extraction for search across the document types the reader opens."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import logging
 import re
 from pathlib import Path
 
+from lhr.extra_view import EXTRA_SUFFIXES, PLAIN_BYTE_SUFFIXES, extract_extra_text
 from lhr.html_text import html_visible_text
 
 logger = logging.getLogger("lhr.extract")
@@ -14,11 +15,11 @@ logger = logging.getLogger("lhr.extract")
 # DocGen HTML exports are often 10–80 MiB. A lower cap made real pages unsearchable.
 MAX_SEARCH_BYTES = 128 * 1024 * 1024
 
-HTML_SUFFIXES = {".html", ".htm"}
+HTML_SUFFIXES = {".html", ".htm", ".xhtml"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 PDF_SUFFIXES = {".pdf"}
 DOCX_SUFFIXES = {".docx", ".dotx"}
-DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES | DOCX_SUFFIXES
+DOC_SUFFIXES = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PDF_SUFFIXES | DOCX_SUFFIXES | EXTRA_SUFFIXES
 
 # Drop scripts, styles, comments, and tags so a literal can still match text split by markup.
 _MARKUP_RE = re.compile(
@@ -166,9 +167,9 @@ def _count_pattern(pat: re.Pattern[str], text: str) -> int:
 
 
 def literal_might_match(path: Path, needle: str, *, match_case: bool = False) -> bool:
-    """False only when a literal needle cannot be in this HTML or Markdown file.
+    """False only when a literal needle cannot be in this text-bearing file.
 
-    PDF and Word stay True: their text is compressed, so the raw bytes are not the document text.
+    PDF, Word, RTF, and zip-based formats stay True: their text is not the raw bytes.
     Large HTML is checked for the contiguous needle only. Smaller HTML also allows the needle
     to be split by tags.
     """
@@ -176,7 +177,8 @@ def literal_might_match(path: Path, needle: str, *, match_case: bool = False) ->
     if not raw or not raw.isascii():
         return True
     suffix = path.suffix.lower()
-    if suffix not in HTML_SUFFIXES and suffix not in MARKDOWN_SUFFIXES:
+    searchable = HTML_SUFFIXES | MARKDOWN_SUFFIXES | PLAIN_BYTE_SUFFIXES
+    if suffix not in searchable:
         return True
     try:
         size = path.stat().st_size
@@ -234,6 +236,8 @@ def extract_search_text(path: Path, *, root: Path | None = None, max_bytes: int 
         return _pdf_text(path, max_bytes=max_bytes)
     if suffix in DOCX_SUFFIXES:
         return _docx_text(path, max_bytes=max_bytes)
+    if suffix in EXTRA_SUFFIXES:
+        return extract_extra_text(path, max_bytes=max_bytes)
     return ""
 
 

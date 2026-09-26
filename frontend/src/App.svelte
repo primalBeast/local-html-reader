@@ -1483,7 +1483,7 @@
         <h2>Documents</h2>
         <SearchField
           value={query}
-          placeholder="Search in HTML, PDF, and Markdown"
+          placeholder="Search documents"
           ariaLabel="Search documents by text"
           history={searchHistory}
           searching={searching}
@@ -1538,16 +1538,16 @@
         {:else if roots.filter((r) => r.enabled !== false).length === 0}
           <div class="empty">
             No folders are enabled. Open the project menu (top left), check a folder, or add one.
-            HTML files stay on disk; this app only reads them.
+            Documents stay on disk; this app only reads them.
           </div>
         {:else if tree.length === 0}
           <div class="empty">
             {#if searching}
               Searching…
             {:else if appliedQuery}
-              No HTML files contain that text.
+              No documents contain that text.
             {:else}
-              No HTML, PDF, or Markdown files in the enabled folders.
+              No supported documents in the enabled folders.
             {/if}
           </div>
         {:else}
