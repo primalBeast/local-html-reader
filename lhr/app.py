@@ -13,8 +13,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from lhr import __version__
-from lhr.api import documents, help as help_api, projects, roots, settings
+from lhr.api import documents, help as help_api, library, projects, roots, settings
 from lhr.config import get_config
+from lhr.guard import LocalOnlyMiddleware
 from lhr.middleware import SecurityHeadersMiddleware, install_cors
 from lhr.sync import clear_subscribers, run_poller, set_loop
 
@@ -60,13 +61,15 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Local HTML Reader",
         version=__version__,
-        docs_url="/api/docs",
+        docs_url="/api/docs" if cfg.dev_cors else None,
         redoc_url=None,
+        openapi_url="/api/openapi.json" if cfg.dev_cors else None,
         lifespan=lifespan,
     )
 
     install_cors(app, enabled=cfg.dev_cors)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(LocalOnlyMiddleware)
 
     @app.get("/health")
     def health() -> dict:
@@ -77,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(projects.router)
     app.include_router(roots.router)
     app.include_router(documents.router)
+    app.include_router(library.router)
 
     dist = frontend_dist()
     assets = dist / "assets"

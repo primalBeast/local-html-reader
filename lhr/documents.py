@@ -124,12 +124,25 @@ def resolve_document(root_id: str, rel: str, *, project: str | None = None) -> P
 
 def launch_in_default_app(path: Path) -> None:
     """Open a file with the operating system's default application."""
+    _open_target(path, directory=False)
+
+
+def reveal_in_file_manager(path: Path) -> None:
+    """Show the file's folder in the system file manager."""
+    target = path if path.is_dir() else path.parent
+    _open_target(target, directory=True)
+
+
+def _open_target(path: Path, *, directory: bool) -> None:
     import subprocess
     import sys
 
     target = str(path)
-    if sys.platform == "win32":
+    if not directory and hasattr(os, "startfile"):
         os.startfile(target)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", target])
         return
     if sys.platform == "darwin":
         subprocess.Popen(["open", target])

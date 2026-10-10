@@ -116,10 +116,14 @@ cd frontend; npm ci; npm run build
 
 ## Security
 
-- Binds to **127.0.0.1** by default (local only, no auth)
-- Do **not** expose the port to the network without adding auth
-- Path access is sandboxed under configured documents-root folders
-- Prefer full-disk encryption (BitLocker) for data at rest
+- Binds to **127.0.0.1** only. `--host` other than loopback is refused. There is no account system.
+- Browser calls from another site are rejected (Host, Origin, and `Sec-Fetch-Site` checks, plus an `X-LHR-Client` header on changes).
+- A document you open cannot call the API. Its scripts do not run unless you press **Allow scripts** on that HTML file, and even then the file is sandboxed off the app and cannot read other folders.
+- Markdown, Word, and EPUB pages are sanitized. Zip members cannot escape the archive. Search refuses regular expressions that would hang the process.
+- The app will not add its own data directory as a documents folder.
+- Do **not** expose the port to the network.
+- Path access is sandboxed under configured documents-root folders.
+- Prefer full-disk encryption (BitLocker) for data at rest.
 
 ## Project layout
 

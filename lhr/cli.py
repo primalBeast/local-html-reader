@@ -35,12 +35,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
     set_config(cfg)
 
-    if cfg.host not in ("127.0.0.1", "localhost", "::1"):
-        logging.getLogger("lhr").warning(
-            "Binding to %s — this exposes local files on the network with no auth. "
-            "Prefer 127.0.0.1.",
-            cfg.host,
+    host_name = cfg.host.strip().lower().rstrip(".")
+    if host_name not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"Refusing to listen on {cfg.host}. Local HTML Reader has no login, "
+            "so it only binds to 127.0.0.1.",
+            file=sys.stderr,
         )
+        return 2
 
     use_webview = bool(getattr(args, "webview", False))
     if use_webview:

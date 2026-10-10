@@ -114,6 +114,25 @@ function applySearchFlags(params: URLSearchParams, flags?: SearchFlags): void {
   if (flags?.wholeWord) params.set('whole_word', 'true');
 }
 
+export type LibraryItem = {
+  root_id: string;
+  rel: string;
+  title: string;
+  root_path: string;
+  at: string;
+};
+
+export type LibraryState = {
+  bookmarks: LibraryItem[];
+  recents: LibraryItem[];
+  notes: Record<string, string>;
+  positions: Record<string, number>;
+};
+
+export function libraryKey(rootId: string, rel: string): string {
+  return `${rootId}\t${rel.replaceAll('\\', '/')}`;
+}
+
 export type Settings = {
   schema_version: number;
   roots: Array<{ id: string; path: string }>;
@@ -147,6 +166,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       Accept: 'application/json',
+      'X-LHR-Client': '1',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
@@ -267,6 +287,32 @@ export const api = {
     request<{ ok: boolean; id: string }>(`/api/roots/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
+  library: () => request<LibraryState>('/api/library'),
+  touchRecent: (rootId: string, rel: string) =>
+    request<LibraryState>('/api/library/recent', {
+      method: 'POST',
+      body: JSON.stringify({ root_id: rootId, rel }),
+    }),
+  toggleBookmark: (rootId: string, rel: string) =>
+    request<LibraryState>('/api/library/bookmark', {
+      method: 'POST',
+      body: JSON.stringify({ root_id: rootId, rel }),
+    }),
+  saveNote: (rootId: string, rel: string, text: string) =>
+    request<LibraryState>('/api/library/note', {
+      method: 'PUT',
+      body: JSON.stringify({ root_id: rootId, rel, text }),
+    }),
+  savePosition: (rootId: string, rel: string, ratio: number) =>
+    request<LibraryState>('/api/library/position', {
+      method: 'PUT',
+      body: JSON.stringify({ root_id: rootId, rel, ratio }),
+    }),
+  revealDocument: (rootId: string, rel: string) =>
+    request<{ ok: boolean }>('/api/documents/reveal', {
+      method: 'POST',
+      body: JSON.stringify({ root_id: rootId, rel }),
+    }),
   documents: (q?: string, rootId?: string, flags?: SearchFlags) => {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
@@ -314,7 +360,10 @@ async function readTreeSse(
   onProgress: (fileCount: number, tree?: TreeNode[], workers?: SearchWorker[]) => void,
   signal?: AbortSignal,
 ): Promise<TreeStreamResult> {
-  const res = await fetch(url, { signal, headers: { Accept: 'text/event-stream' } });
+  const res = await fetch(url, {
+    signal,
+    headers: { Accept: 'text/event-stream', 'X-LHR-Client': '1' },
+  });
   if (!res.ok || !res.body) throw new Error(`tree stream failed (${res.status})`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

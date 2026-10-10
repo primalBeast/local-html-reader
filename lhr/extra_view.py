@@ -30,6 +30,7 @@ from lhr.limits import (
 )
 from lhr.page_html import VIEW_CHAR_CAP, html_page, pre_block
 from lhr.rtf_text import rtf_to_text
+from lhr.sanitize import sanitize_html
 
 logger = logging.getLogger("lhr.extra_view")
 
@@ -212,12 +213,21 @@ def _json_html(text: str) -> str:
     return pre_block(pretty)
 
 
+def _xml_root(text: str) -> ET.Element | None:
+    sample = text.lstrip()[:4096].lower()
+    if sample.startswith("<!doctype") or "<!entity" in text[:8192].lower():
+        return None
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError:
+        return None
+
+
 def _xml_text(raw: str) -> str:
     if len(raw.encode("utf-8", errors="replace")) > _XML_PARSE_CAP:
         return raw
-    try:
-        root = ET.fromstring(raw)
-    except ET.ParseError:
+    root = _xml_root(raw)
+    if root is None:
         return raw
     parts = [chunk.strip() for chunk in root.itertext() if chunk and chunk.strip()]
     return "\n".join(parts)
@@ -228,9 +238,8 @@ def _xml_html(text: str) -> str:
         return "<p>(empty file)</p>"
     if len(text.encode("utf-8", errors="replace")) > _XML_PARSE_CAP:
         return pre_block(text)
-    try:
-        root = ET.fromstring(text)
-    except ET.ParseError:
+    root = _xml_root(text)
+    if root is None:
         return pre_block(text)
     try:
         ET.indent(root)
@@ -281,6 +290,9 @@ def _member_bytes(zf: ZipFile, name: str) -> bytes | None:
             return None
     if info.file_size > _MAX_MEMBER_BYTES:
         return None
+    if info.compress_size and info.file_size > 8_000_000:
+        if info.file_size / info.compress_size > 1000:
+            return None
     try:
         return zf.read(key)
     except (OSError, BadZipFile, RuntimeError):
@@ -290,6 +302,9 @@ def _member_bytes(zf: ZipFile, name: str) -> bytes | None:
 def _read_xml_member(zf: ZipFile, name: str) -> ET.Element | None:
     data = _member_bytes(zf, name)
     if not data:
+        return None
+    head = data.lstrip()[:4096].lower()
+    if head.startswith(b"<!doctype") or b"<!entity" in data[:8192].lower():
         return None
     try:
         return ET.fromstring(data)
@@ -759,6 +774,10 @@ def _body_inner(raw: str) -> str:
     return _SCRIPT_RE.sub("", chunk)
 
 
+def _safe_body(raw: str) -> str:
+    return sanitize_html(_body_inner(raw))
+
+
 def _html_title(raw: str) -> str:
     match = _TITLE_RE.search(raw)
     if not match:
@@ -777,7 +796,7 @@ def _epub_chapters(path: Path) -> list[tuple[str, str, str]]:
             if not raw.strip():
                 continue
             title = _html_title(raw) or f"Chapter {len(chapters) + 1}"
-            chapters.append((title, _body_inner(raw), html_visible_text(raw)))
+            chapters.append((title, _safe_body(raw), html_visible_text(raw)))
         return chapters
 
 
@@ -844,7 +863,7 @@ def _markdown_html(source: str) -> str:
         import markdown
     except ImportError:
         return f"<pre>{html_lib.escape(source)}</pre>"
-    return markdown.markdown(source, extensions=["fenced_code", "tables", "nl2br", "sane_lists"])
+    return sanitize_html(markdown.markdown(source, extensions=["fenced_code", "tables", "nl2br", "sane_lists"]))
 
 
 def _notebook_text(text: str) -> str:

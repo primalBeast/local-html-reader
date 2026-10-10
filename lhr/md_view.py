@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html as html_lib
 
+from lhr.sanitize import sanitize_html
+
 
 def markdown_to_html_page(title: str, source: str) -> str:
     try:
@@ -11,9 +13,11 @@ def markdown_to_html_page(title: str, source: str) -> str:
     except ImportError:
         body = f"<pre>{html_lib.escape(source)}</pre>"
     else:
-        body = markdown.markdown(
-            source,
-            extensions=["fenced_code", "tables", "nl2br", "sane_lists"],
+        body = sanitize_html(
+            markdown.markdown(
+                source,
+                extensions=["fenced_code", "tables", "nl2br", "sane_lists"],
+            )
         )
     safe_title = html_lib.escape(title)
     return (

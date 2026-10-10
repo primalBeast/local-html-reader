@@ -71,13 +71,12 @@ def normalize_rel(rel: str) -> str:
         raise PathEscapeError("empty path")
     if "\x00" in text:
         raise PathEscapeError("invalid path")
+    # Same rules on every OS. A backslash is a separator, and C:\... is absolute.
+    text = text.replace("\\", "/")
+    if text.startswith("/") or (len(text) >= 2 and text[1] == ":"):
+        raise PathEscapeError("absolute path not allowed")
 
     p = Path(text)
-    if p.is_absolute() or p.drive:
-        raise PathEscapeError("absolute path not allowed")
-    if text.startswith(("/", "\\")):
-        raise PathEscapeError("absolute path not allowed")
-
     parts: list[str] = []
     for part in p.parts:
         if part in ("/", "\\"):

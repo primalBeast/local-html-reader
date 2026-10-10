@@ -4,7 +4,8 @@
   import SearchField from './lib/SearchField.svelte';
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
-  import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type SearchWorker, type Settings, type TreeNode } from './lib/api';
+  import { api, historyFromUnknown, libraryKey, nodeToHit, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type LibraryItem, type LibraryState, type Project, type Root, type SearchHistoryItem, type SearchWorker, type Settings, type TreeNode } from './lib/api';
+  import { filterTree, flatFiles, isHtmlName, lockdownHtml, readerChromeCss, readingStats, type DocKind } from './lib/readerTools';
   import PdfViewer from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
@@ -34,6 +35,23 @@
   let searchHistory = $state<SearchHistoryItem[]>([]);
   let pageHistory = $state<SearchHistoryItem[]>([]);
   let selected = $state<DocumentHit | null>(null);
+  let kindFilter = $state<DocKind>('all');
+  let shelf = $state<'files' | 'bookmarks' | 'recent'>('files');
+  let libraryState = $state<LibraryState | null>(null);
+  let readTheme = $state<'paper' | 'sepia' | 'night'>(readStoredTheme());
+  let readScale = $state(readStoredScale());
+  let notesOpen = $state(false);
+  let noteDraft = $state('');
+  let noteDirty = $state(false);
+  let tocOpen = $state(false);
+  let tocItems = $state<{ index: number; level: number; text: string }[]>([]);
+  let readWords = $state(0);
+  let readMinutes = $state(0);
+  let readProgress = $state(0);
+  let scriptsOn = $state(false);
+  let noteTimer: ReturnType<typeof setTimeout> | undefined;
+  let positionTimer: ReturnType<typeof setTimeout> | undefined;
+  let scrollCleanup: (() => void) | null = null;
   let openingKey = $state<string | null>(null);
   let loadedKey = $state<string | null>(null);
   let pageSummary = $state('');
@@ -188,6 +206,52 @@
 
   let currentProject = $derived(projects.find((p) => p.slug === currentSlug) ?? null);
   let rootLabel = $derived(currentProject?.name || 'No project');
+  let shownTree = $derived(filterTree(tree, kindFilter));
+  let bookmarked = $derived(
+    Boolean(
+      selected &&
+        libraryState?.bookmarks.some((row) => row.root_id === selected?.root_id && row.rel === selected?.rel),
+    ),
+  );
+
+  function readStoredTheme(): 'paper' | 'sepia' | 'night' {
+    try {
+      const value = localStorage.getItem('lhr.read-theme');
+      if (value === 'sepia' || value === 'night' || value === 'paper') return value;
+    } catch {
+      /* ignore */
+    }
+    return 'paper';
+  }
+
+  function readStoredScale(): number {
+    try {
+      const value = Number(localStorage.getItem('lhr.read-scale') || '');
+      if (Number.isFinite(value) && value >= 0.85 && value <= 1.6) return value;
+    } catch {
+      /* ignore */
+    }
+    return 1;
+  }
+
+  function itemToHit(item: LibraryItem): DocumentHit {
+    return {
+      root_id: item.root_id,
+      root_path: item.root_path,
+      rel: item.rel,
+      name: item.title || item.rel.split('/').pop() || item.rel,
+      size: 0,
+      mtime: 0,
+    };
+  }
+
+  async function loadLibrary() {
+    try {
+      libraryState = await api.library();
+    } catch {
+      libraryState = null;
+    }
+  }
 
   function persistSessionProject(slug: string | null) {
     setApiProject(slug);
@@ -213,12 +277,14 @@
     const slugs = new Set(projects.map((p) => p.slug));
     if (currentSlug && slugs.has(currentSlug)) {
       persistSessionProject(currentSlug);
+      await loadLibrary();
       return;
     }
     const stored = readSessionProject();
     const next = stored && slugs.has(stored) ? stored : data.current_slug;
     currentSlug = next;
     persistSessionProject(currentSlug);
+    await loadLibrary();
   }
 
   async function refreshRoots() {
@@ -691,6 +757,20 @@
     pageMarks = [];
     pageIndex = 0;
     listIndex = 0;
+    scriptsOn = false;
+    tocOpen = false;
+    tocItems = [];
+    readWords = 0;
+    readMinutes = 0;
+    readProgress = 0;
+    noteDirty = false;
+    noteDraft = libraryState?.notes[libraryKey(doc.root_id, doc.rel)] || '';
+    void api
+      .touchRecent(doc.root_id, doc.rel)
+      .then((lib) => {
+        libraryState = lib;
+      })
+      .catch(() => undefined);
     try {
       await api.patchSettings({ last_document: { root_id: doc.root_id, rel: doc.rel } });
     } catch {
@@ -857,34 +937,44 @@
   function withBaseHref(html: string, pageUrl: string): string {
     const abs = new URL(pageUrl, window.location.href);
     const dir = `${abs.origin}${abs.pathname.replace(/[^/]+$/, '')}`;
-    const tag = `<base href="${dir.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">`;
-    if (/<base\s/i.test(html)) return html;
-    const withHead = html.replace(/<head([^>]*)>/i, (open) => `${open}${tag}`);
-    if (withHead !== html) return withHead;
-    return `<!doctype html><head>${tag}</head>${html}`;
+    const tag = `<base href="${dir.replace(/&/g, '&').replace(/"/g, '"')}">`;
+    const stripped = html.replace(/<base\b[^>]*>/gi, '');
+    const withHead = stripped.replace(/<head([^>]*)>/i, (open) => `${open}${tag}`);
+    if (withHead !== stripped) return withHead;
+    return `<!doctype html><head>${tag}</head>${stripped}`;
   }
 
-  async function loadHtmlFrame(doc: DocumentHit, el: HTMLIFrameElement) {
+  async function loadHtmlFrame(doc: DocumentHit, el: HTMLIFrameElement, allowScripts: boolean) {
     const url = viewUrl(doc.root_id, doc.rel);
     const key = docKey(doc);
     delete el.dataset.readyKey;
+    if (allowScripts) {
+      el.removeAttribute('srcdoc');
+      el.setAttribute('sandbox', 'allow-scripts allow-downloads');
+      el.dataset.readyKey = key;
+      el.src = `${url}?scripts=1`;
+      return;
+    }
     try {
-      const res = await fetch(url, { headers: { Accept: 'text/html,*/*' } });
-      if (openingKey !== key) return;
+      const res = await fetch(url, { headers: { Accept: 'text/html,*/*', 'X-LHR-Client': '1' } });
+      if (openingKey && openingKey !== key) return;
       el.dataset.readyKey = key;
       if (!res.ok) {
+        el.removeAttribute('sandbox');
         el.src = url;
         return;
       }
       const html = await res.text();
-      if (openingKey !== key) return;
+      if (openingKey && openingKey !== key) return;
+      const generated = res.headers.get('x-lhr-reader-page') === 'generated';
       el.removeAttribute('sandbox');
       el.removeAttribute('src');
-      el.srcdoc = withBaseHref(html, url);
+      el.srcdoc = lockdownHtml(withBaseHref(html, url), generated);
     } catch {
-      if (openingKey !== key) return;
+      if (openingKey && openingKey !== key) return;
       try {
         el.dataset.readyKey = key;
+        el.removeAttribute('sandbox');
         el.src = url;
       } catch {
         clearOpening(doc);
@@ -1066,24 +1156,198 @@
     pageIndex = reveal(pageMarks, pageIndex - 1, 'page');
   }
 
+  function applyReaderChrome(doc: Document) {
+    const head = doc.head || doc.documentElement;
+    if (!head) return;
+    let style = doc.getElementById('lhr-reader-chrome') as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement('style');
+      style.id = 'lhr-reader-chrome';
+      head.appendChild(style);
+    }
+    style.textContent = readerChromeCss(readTheme, readScale);
+  }
+
+  function neutralizeDocument(doc: Document) {
+    doc.querySelectorAll('*').forEach((node) => {
+      for (const attr of Array.from(node.attributes)) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) node.removeAttribute(attr.name);
+      }
+      for (const key of ['href', 'src', 'action']) {
+        const value = node.getAttribute(key) || '';
+        if (/^\s*(javascript|vbscript):/i.test(value)) node.removeAttribute(key);
+      }
+    });
+  }
+
+  function measureReading(doc: Document) {
+    const text = doc.body?.innerText || '';
+    const stats = readingStats(text);
+    readWords = stats.words;
+    readMinutes = stats.minutes;
+    const heads = Array.from(doc.querySelectorAll('h1, h2, h3'));
+    tocItems = heads
+      .map((el, index) => ({
+        index,
+        level: Number(el.tagName.slice(1)) || 1,
+        text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 140),
+      }))
+      .filter((row) => row.text);
+  }
+
+  function scrollRatio(doc: Document): number {
+    const el = doc.scrollingElement || doc.documentElement;
+    if (!el) return 0;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0) return 0;
+    return Math.min(1, Math.max(0, el.scrollTop / max));
+  }
+
+  function restoreScroll(doc: Document, hit: DocumentHit) {
+    const ratio = libraryState?.positions[libraryKey(hit.root_id, hit.rel)] || 0;
+    if (ratio <= 0) return;
+    const el = doc.scrollingElement || doc.documentElement;
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = max * ratio;
+  }
+
+  function watchScroll(doc: Document, hit: DocumentHit) {
+    scrollCleanup?.();
+    const onScroll = () => {
+      readProgress = scrollRatio(doc);
+      const ratio = readProgress;
+      if (positionTimer) clearTimeout(positionTimer);
+      positionTimer = setTimeout(() => {
+        void api
+          .savePosition(hit.root_id, hit.rel, ratio)
+          .then((lib) => {
+            libraryState = lib;
+          })
+          .catch(() => undefined);
+      }, 500);
+    };
+    doc.addEventListener('scroll', onScroll, true);
+    scrollCleanup = () => doc.removeEventListener('scroll', onScroll, true);
+    readProgress = scrollRatio(doc);
+  }
+
+  function setReadTheme(theme: 'paper' | 'sepia' | 'night') {
+    readTheme = theme;
+    try {
+      localStorage.setItem('lhr.read-theme', theme);
+    } catch {
+      /* ignore */
+    }
+    const doc = iframeDoc();
+    if (doc) applyReaderChrome(doc);
+  }
+
+  function setReadScale(next: number) {
+    readScale = Math.min(1.6, Math.max(0.85, Math.round(next * 100) / 100));
+    try {
+      localStorage.setItem('lhr.read-scale', String(readScale));
+    } catch {
+      /* ignore */
+    }
+    const doc = iframeDoc();
+    if (doc) applyReaderChrome(doc);
+  }
+
+  function jumpToc(index: number) {
+    const doc = iframeDoc();
+    const el = doc?.querySelectorAll('h1, h2, h3')[index];
+    el?.scrollIntoView({ block: 'start' });
+    tocOpen = false;
+  }
+
+  async function copyPageText() {
+    const text = iframeDoc()?.body?.innerText || pdfRootEl?.innerText || '';
+    if (!text.trim()) return;
+    await copyToClipboard(text);
+  }
+
+  async function revealSelected() {
+    if (!selected) return;
+    try {
+      await api.revealDocument(selected.root_id, selected.rel);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function onToggleBookmark() {
+    if (!selected) return;
+    try {
+      libraryState = await api.toggleBookmark(selected.root_id, selected.rel);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  function onNoteInput(value: string) {
+    noteDraft = value;
+    noteDirty = true;
+    const hit = selected;
+    if (!hit) return;
+    if (noteTimer) clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => {
+      void api
+        .saveNote(hit.root_id, hit.rel, value)
+        .then((lib) => {
+          libraryState = lib;
+          noteDirty = false;
+        })
+        .catch(() => undefined);
+    }, 400);
+  }
+
+  function readingList(): DocumentHit[] {
+    if (shelf === 'bookmarks') return (libraryState?.bookmarks || []).map(itemToHit);
+    if (shelf === 'recent') return (libraryState?.recents || []).map(itemToHit);
+    return flatFiles(shownTree).map((node) => nodeToHit(node));
+  }
+
+  function stepDoc(delta: number) {
+    const files = readingList();
+    if (!files.length) return;
+    const index = files.findIndex((row) => selected && row.root_id === selected.root_id && row.rel === selected.rel);
+    const next = index + delta;
+    if (next < 0 || next >= files.length) return;
+    void openDoc(files[next]);
+  }
+
   function onIframeLoad() {
     const readyKey = iframeEl?.dataset.readyKey;
+    scrollCleanup?.();
+    scrollCleanup = null;
     if (selected && !isPdfHit(selected) && readyKey && readyKey === docKey(selected)) {
       clearOpening(selected);
-      const shown = iframeDoc();
-      if (shown) {
-        requestAnimationFrame(() => {
-          if (!selected || isPdfHit(selected) || docKey(selected) !== readyKey) return;
-          pageSummary = formatPages(estimatePrintedPages(shown), true);
-        });
-      }
+    }
+    if (scriptsOn && selected && isHtmlName(selected.name)) {
+      pageSummary = 'Scripts on — find in page is off';
+      readWords = 0;
+      readMinutes = 0;
+      return;
     }
     iframeCopyCleanup?.();
     iframeCopyCleanup = null;
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
     const doc = iframeDoc();
     const frame = iframeEl;
-    if (!doc || !frame) return;
+    if (!doc || !frame || !selected) return;
+    neutralizeDocument(doc);
+    applyReaderChrome(doc);
+    measureReading(doc);
+    const hit = selected;
+    requestAnimationFrame(() => {
+      if (!selected || docKey(selected) !== readyKey) return;
+      restoreScroll(doc, hit);
+      readProgress = scrollRatio(doc);
+      if (!isPdfHit(selected)) pageSummary = formatPages(estimatePrintedPages(doc), true);
+    });
+    watchScroll(doc, hit);
     const handler = (event: MouseEvent) => {
       const text =
         selectedTextIn(doc.body ?? doc) || wordAtPoint(doc, event.clientX, event.clientY);
@@ -1284,8 +1548,9 @@
   $effect(() => {
     const el = iframeEl;
     const doc = heldHtml ?? (selected && !isPdfHit(selected) ? selected : null);
+    const allowScripts = scriptsOn && doc ? isHtmlName(doc.name) : false;
     if (!el || !doc) return;
-    void loadHtmlFrame(doc, el);
+    void loadHtmlFrame(doc, el, allowScripts);
   });
 
   async function pingServer() {
@@ -1321,6 +1586,7 @@
     window.addEventListener('wheel', onZoomWheel, { passive: false });
     return () => {
       iframeCopyCleanup?.();
+      scrollCleanup?.();
       stopWatch();
       clearInterval(healthTick);
       clearInterval(webviewTick);
@@ -1540,6 +1806,28 @@
             {#if truncated} (truncated){/if}
           {/if}
         </div>
+        <div class="kind-row" role="toolbar" aria-label="Filter documents">
+          {#each [
+            ['all', 'All'],
+            ['html', 'HTML'],
+            ['md', 'MD'],
+            ['pdf', 'PDF'],
+            ['office', 'Office'],
+            ['text', 'Text'],
+          ] as chip (chip[0])}
+            <button
+              type="button"
+              class="chip"
+              class:on={shelf === 'files' && kindFilter === chip[0]}
+              onclick={() => {
+                shelf = 'files';
+                kindFilter = chip[0] as DocKind;
+              }}
+            >{chip[1]}</button>
+          {/each}
+          <button type="button" class="chip" class:on={shelf === 'bookmarks'} onclick={() => (shelf = 'bookmarks')}>Saved</button>
+          <button type="button" class="chip" class:on={shelf === 'recent'} onclick={() => (shelf = 'recent')}>Recent</button>
+        </div>
       </div>
       {#if error && !folderDialog}
         <div class="error">{error}</div>
@@ -1552,7 +1840,7 @@
             No folders are enabled. Open the project menu (top left), check a folder, or add one.
             Documents stay on disk; this app only reads them.
           </div>
-        {:else if tree.length === 0}
+        {:else if shelf === 'files' && tree.length === 0}
           <div class="empty">
             {#if searching}
               Searching…
@@ -1562,9 +1850,32 @@
               No supported documents in the enabled folders.
             {/if}
           </div>
+        {:else if shelf !== 'files'}
+          {@const rows = shelf === 'bookmarks' ? libraryState?.bookmarks || [] : libraryState?.recents || []}
+          {#if rows.length === 0}
+            <div class="empty">
+              {shelf === 'bookmarks' ? 'No saved documents yet. Open one and press Save.' : 'Documents you open will show up here.'}
+            </div>
+          {:else}
+            <div class="shelf-list">
+              {#each rows as row (`${row.root_id}:${row.rel}`)}
+                <button
+                  type="button"
+                  class="shelf-row"
+                  class:active={selected?.root_id === row.root_id && selected?.rel === row.rel}
+                  onclick={() => void openDoc(itemToHit(row))}
+                >
+                  <span>{row.title || row.rel}</span>
+                  <small>{row.rel}</small>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {:else if shownTree.length === 0}
+          <div class="empty">Nothing in this filter.</div>
         {:else}
           <Tree
-            nodes={tree}
+            nodes={shownTree}
             {selected}
             {openingKey}
             onOpen={openDoc}
@@ -1614,7 +1925,44 @@
             {#if pageSummary}
               <div class="doc-pages">{pageSummary}</div>
             {/if}
+            {#if readWords}
+              <div class="doc-pages">{readMinutes} min · {readWords.toLocaleString()} words · {Math.round(readProgress * 100)}%</div>
+            {/if}
           </div>
+          <div class="reader-tools">
+            <button class="btn-ghost btn-small" type="button" onclick={() => void stepDoc(-1)}>Prev</button>
+            <button class="btn-ghost btn-small" type="button" onclick={() => void stepDoc(1)}>Next</button>
+            <button class="btn-ghost btn-small" type="button" class:on={bookmarked} onclick={() => void onToggleBookmark()}>
+              {bookmarked ? 'Saved' : 'Save'}
+            </button>
+            <button class="btn-ghost btn-small" type="button" onclick={() => void copyPageText()}>Copy text</button>
+            <button class="btn-ghost btn-small" type="button" onclick={() => void revealSelected()}>Show folder</button>
+            <button class="btn-ghost btn-small" type="button" class:on={notesOpen} onclick={() => (notesOpen = !notesOpen)}>Notes</button>
+            <button class="btn-ghost btn-small" type="button" class:on={tocOpen} onclick={() => (tocOpen = !tocOpen)} disabled={!tocItems.length}>Contents</button>
+            <button class="btn-ghost btn-small" type="button" onclick={() => setReadScale(readScale - 0.1)}>A−</button>
+            <button class="btn-ghost btn-small" type="button" onclick={() => setReadScale(readScale + 0.1)}>A+</button>
+            <button class="btn-ghost btn-small" type="button" class:on={readTheme === 'paper'} onclick={() => setReadTheme('paper')}>Paper</button>
+            <button class="btn-ghost btn-small" type="button" class:on={readTheme === 'sepia'} onclick={() => setReadTheme('sepia')}>Sepia</button>
+            <button class="btn-ghost btn-small" type="button" class:on={readTheme === 'night'} onclick={() => setReadTheme('night')}>Night</button>
+            {#if selected && isHtmlName(selected.name)}
+              <button
+                class="btn-ghost btn-small"
+                type="button"
+                class:on={scriptsOn}
+                title="Run scripts in this file. It still cannot call the app."
+                onclick={() => (scriptsOn = !scriptsOn)}
+              >{scriptsOn ? 'Scripts on' : 'Allow scripts'}</button>
+            {/if}
+          </div>
+          {#if tocOpen && tocItems.length}
+            <div class="toc-list">
+              {#each tocItems as item (item.index)}
+                <button type="button" class="toc-row" style={`padding-left: ${0.4 + (item.level - 1) * 0.7}rem`} onclick={() => jumpToc(item.index)}>
+                  {item.text}
+                </button>
+              {/each}
+            </div>
+          {/if}
           <div class="page-finds">
             <form
               class="page-find list-find"
@@ -1716,6 +2064,17 @@
             </form>
           </div>
         </div>
+        {#if notesOpen}
+          <label class="note-box">
+            <span>Note for this document. Stored with the project, not next to the file.</span>
+            <textarea
+              rows="4"
+              value={noteDraft}
+              oninput={(e) => onNoteInput((e.currentTarget as HTMLTextAreaElement).value)}
+            ></textarea>
+          </label>
+        {/if}
+        <div class="read-progress" style={`transform: scaleX(${readProgress})`}></div>
         <div class="viewer-stage">
           {#if selected && (!isPdfHit(selected) || heldHtml)}
             {#key `${(heldHtml ?? selected).root_id}:${(heldHtml ?? selected).rel}`}

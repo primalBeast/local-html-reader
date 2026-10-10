@@ -27,6 +27,28 @@ _MARKUP_RE = re.compile(
 # PDF text extractors often emit "0 4 4 1 4 7 J" for "044147J". Only those
 # single-character runs are collapsed — not newlines between real tokens.
 _GLYPH_RUN = re.compile(r"(?<!\w)(?:\w[ \t\r\n]+){1,}\w(?!\w)")
+_MAX_REGEX_LEN = 160
+_NESTED_REPEAT = re.compile(r"\([^)]*[+*?][^)]*\)[+*{]")
+
+
+def _regex_rejected(pattern: str) -> bool:
+    """Reject patterns that are long enough, or nested enough, to hang the search."""
+    if len(pattern) > _MAX_REGEX_LEN:
+        return True
+    quantifiers = 0
+    escaped = False
+    for ch in pattern:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch in "+*{":
+            quantifiers += 1
+    if quantifiers > 12:
+        return True
+    return _NESTED_REPEAT.search(pattern) is not None
 
 
 def _collapse_glyph_spaces(text: str) -> str:
@@ -73,6 +95,9 @@ def count_text_matches(
     if not match_case:
         flags |= re.IGNORECASE
     if regex:
+        if _regex_rejected(raw):
+            logger.warning("Rejected unsafe search pattern (%s chars)", len(raw))
+            return 0
         # Same as the right pane: "." does not cross line breaks.
         source = _js_dot(raw)
     else:

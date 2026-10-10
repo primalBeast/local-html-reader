@@ -111,6 +111,26 @@
         <p class="meta">https://github.com/primalBeast/local-html-reader · bind 127.0.0.1:8766</p>
       </header>
 
+      <article class="unreleased">
+        <div class="row">
+          <h2>Security hardening and reading tools</h2>
+          <span class="chip">0.2.0</span>
+          <span class="date">2026-10-10</span>
+        </div>
+        <ul>
+          <li><strong>Loopback only.</strong> The server refuses to listen on anything except 127.0.0.1, localhost, or ::1.</li>
+          <li><strong>Other websites cannot call the app.</strong> Requests must use a loopback Host. Cross-site browser requests are rejected, and changes require the app’s own client header.</li>
+          <li><strong>Opened files cannot reach the API.</strong> HTML is shown with scripts off. Allow scripts is per file and sandboxed, so a document still cannot read your other folders. Generated pages (Markdown, Word, EPUB, notebooks) have scripts and event handlers removed.</li>
+          <li>Zip members that try to escape the archive, XML with a doctype, and regular expressions that can hang search are rejected. The app data folder cannot be added as a documents folder. Unknown file types download instead of opening inline. API docs are off unless you are in dev mode.</li>
+          <li><strong>Save, Recent, and type filters</strong> (HTML, Markdown, PDF, Office, text) in the document list.</li>
+          <li><strong>Prev / Next</strong> through the current list.</li>
+          <li><strong>Copy text</strong> of the open document, and <strong>Show folder</strong> in the file manager.</li>
+          <li><strong>Notes</strong> stored with the project, not beside the file.</li>
+          <li><strong>Contents</strong> jumps to headings. <strong>Paper, Sepia, and Night</strong>, plus <strong>A− / A+</strong>.</li>
+          <li>Reading time, word count, a progress bar, and the last scroll position are remembered per document.</li>
+        </ul>
+      </article>
+
       <article>
         <div class="row">
           <h2>Higher limits, and a formats help</h2>

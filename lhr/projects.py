@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from lhr.json_io import read_json, write_json
-from lhr.paths import project_dir, projects_dir, validate_slug
+from lhr.paths import data_root, project_dir, projects_dir, validate_slug
 from lhr.settings import load_settings, patch_settings
 
 DEFAULT_PROJECT = {
@@ -281,6 +281,12 @@ def _validate_abs_dir(raw_path: str) -> Path:
         raise ValueError(f"cannot resolve path: {exc}") from exc
     if not resolved.is_dir():
         raise ValueError("path is not an existing directory")
+    try:
+        data = data_root().resolve()
+    except OSError:
+        data = None
+    if data is not None and (resolved == data or data in resolved.parents):
+        raise ValueError("that folder is inside the app data directory")
     return resolved
 
 

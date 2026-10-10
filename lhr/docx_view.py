@@ -6,6 +6,8 @@ import html as html_lib
 import logging
 from pathlib import Path
 
+from lhr.sanitize import sanitize_html
+
 logger = logging.getLogger("lhr.docx_view")
 
 _PAGE_CSS = (
@@ -29,7 +31,7 @@ def docx_to_html_page(title: str, path: Path) -> str:
         try:
             with path.open("rb") as fh:
                 result = mammoth.convert_to_html(fh)
-            body = (result.value or "").strip() or "<p>(empty document)</p>"
+            body = sanitize_html((result.value or "").strip()) or "<p>(empty document)</p>"
         except Exception:
             logger.debug("DOCX render failed for %s", path, exc_info=True)
             body = "<p>Could not open this Word document.</p>"

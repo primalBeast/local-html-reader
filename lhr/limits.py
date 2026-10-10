@@ -76,6 +76,7 @@ def help_document() -> dict:
                 "limits": [
                     f"Searched and shown up to {file_mb} MB. The page is the file itself, with no shorter cutoff.",
                     "Search uses the visible text, not scripts or tags.",
+                    "Scripts in the file do not run. Allow scripts on that file only if you trust it; the file still cannot call the app.",
                 ],
             },
             {

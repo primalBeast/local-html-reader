@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from lhr import documents
 from lhr.extract import DOCX_SUFFIXES, EXTRA_SUFFIXES, HTML_SUFFIXES, MARKDOWN_SUFFIXES, PDF_SUFFIXES
 from lhr.paths import PathEscapeError
+from lhr.view_policy import view_headers
 
 router = APIRouter(tags=["documents"])
 
@@ -144,8 +145,33 @@ def launch_document(body: LaunchBody, project: str | None = Query(default=None))
     return {"ok": True}
 
 
+@router.post("/api/documents/reveal")
+def reveal_document(body: LaunchBody, project: str | None = Query(default=None)) -> dict:
+    """Open the file's folder in the system file manager. The file itself stays put."""
+    try:
+        path = documents.resolve_document(body.root_id, body.rel, project=project)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    try:
+        documents.reveal_in_file_manager(path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="could not open the folder") from exc
+    return {"ok": True}
+
+
 @router.get("/view/{root_id}/{rel_path:path}")
-def view_file(root_id: str, rel_path: str, project: str | None = Query(default=None)):
+def view_file(
+    root_id: str,
+    rel_path: str,
+    project: str | None = Query(default=None),
+    scripts: bool = Query(default=False),
+):
     rel = unquote(rel_path or "")
     try:
         path = documents.resolve_document(root_id, rel, project=project)
@@ -167,34 +193,53 @@ def view_file(root_id: str, rel_path: str, project: str | None = Query(default=N
             raw = path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             raise HTTPException(status_code=404, detail="file not found") from exc
-        return HTMLResponse(markdown_to_html_page(path.name, raw))
+        return HTMLResponse(
+            markdown_to_html_page(path.name, raw),
+            headers=view_headers(generated=True),
+        )
 
     if suffix in DOCX_SUFFIXES:
         from lhr.docx_view import docx_to_html_page
 
-        return HTMLResponse(docx_to_html_page(path.name, path))
+        return HTMLResponse(
+            docx_to_html_page(path.name, path),
+            headers=view_headers(generated=True),
+        )
 
     media, _enc = mimetypes.guess_type(str(path))
     if suffix in HTML_SUFFIXES:
         # No filename= — Edge blocks iframe documents with Content-Disposition filename
         # ("This page has been blocked by Microsoft Edge"), so in-page search sees no text.
+        # scripts=1 is opt-in. The UI sandboxes that frame off the app origin.
         return FileResponse(
             path,
             media_type="text/html; charset=utf-8",
-            headers={"Content-Disposition": "inline"},
+            headers={
+                "Content-Disposition": "inline",
+                **view_headers(scripts=bool(scripts)),
+            },
         )
     if suffix in PDF_SUFFIXES:
         return FileResponse(
             path,
             media_type="application/pdf",
-            headers={"Content-Disposition": "inline"},
+            headers={"Content-Disposition": "inline", **view_headers()},
         )
     if suffix in EXTRA_SUFFIXES:
         from lhr.extra_view import render_extra
 
-        return HTMLResponse(render_extra(path))
+        return HTMLResponse(render_extra(path), headers=view_headers(generated=True))
+    inline_images = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico"}
+    if suffix in inline_images:
+        return FileResponse(
+            path,
+            media_type=media or "application/octet-stream",
+            content_disposition_type="inline",
+            headers=view_headers(),
+        )
     return FileResponse(
         path,
         media_type=media or "application/octet-stream",
-        content_disposition_type="inline",
+        content_disposition_type="attachment",
+        headers=view_headers(),
     )
