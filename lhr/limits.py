@@ -91,6 +91,7 @@ def help_document() -> dict:
                 "extensions": _exts(PDF_SUFFIXES),
                 "limits": [
                     f"Searched and opened up to {file_mb} MB.",
+                    "Every page is shown. Pages are drawn as they scroll into view.",
                     "Find in page uses the PDF text layer.",
                 ],
             },

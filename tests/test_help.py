@@ -52,6 +52,13 @@ def test_help_lists_every_supported_extension_once() -> None:
     assert ".doc" in body["skipped"]
 
 
+def test_pdf_viewer_is_not_capped_at_200_pages() -> None:
+    src = Path("frontend/src/lib/PdfViewer.svelte").read_text(encoding="utf-8")
+    assert "Math.min(pdf.numPages, 200)" not in src
+    assert "for (let n = 1; n <= pdf.numPages" not in src
+    assert "pdf.numPages" in src
+
+
 def test_frontend_find_cap_matches() -> None:
     src = Path("frontend/src/lib/findMatch.ts").read_text(encoding="utf-8")
     assert f"export const FIND_HIT_CAP = {MATCH_CAP}" in src

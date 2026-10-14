@@ -1053,6 +1053,18 @@ iframe.doc-frame.viewer-under {
   user-select: none;
 }
 
+.pdf-page:not(:has(img)):not(:has(canvas))::before {
+  content: attr(data-page-number);
+  position: absolute;
+  top: 0.75rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: #8b93a3;
+  font: 600 0.85rem/1.2 "Segoe UI", system-ui, sans-serif;
+  pointer-events: none;
+}
+
 .pdf-loading {
   position: absolute;
   inset: 0;

@@ -34,7 +34,6 @@
     let activeUrl = '';
     const lifetime: Array<{ destroy?: () => void; cancel?: () => void }> = [];
     let pageTasks: Array<{ destroy?: () => void; cancel?: () => void }> = [];
-    const blobUrls: string[] = [];
     let pdfjsMod: typeof import('pdfjs-dist') | null = null;
     let pdfWorker: { destroy?: () => void } | null = null;
     let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; destroy?: () => void } | null = null;
@@ -50,6 +49,23 @@
     let zoomReady = false;
     let liveFit = 1;
     let resizeTimer = 0;
+    let pageEls: HTMLDivElement[] = [];
+    let pageTops: number[] = [];
+    const renderedFull = new Set<number>();
+    const renderedText = new Set<number>();
+    const failedFull = new Set<number>();
+    const failedText = new Set<number>();
+    const blobByPage = new Map<number, string>();
+    const wantFull = new Set<number>();
+    let textCursor = 1;
+    let pumping = false;
+    let pumpAgain = false;
+    let laidOutUrl = '';
+    let textDoneGen = -1;
+    let notifyFirst: (() => void) | null = null;
+    let scrollQueued = false;
+    let paintLock: Promise<void> = Promise.resolve();
+    let layoutCommitted = false;
 
     function gutterWidth(): number {
       const el = slot || frame;
@@ -93,9 +109,19 @@
       pageTasks = [];
     }
 
+    function track(task: { cancel?: () => void; destroy?: () => void }) {
+      pageTasks.push(task);
+      return task;
+    }
+
+    function untrack(task: { cancel?: () => void; destroy?: () => void }) {
+      const index = pageTasks.indexOf(task);
+      if (index >= 0) pageTasks.splice(index, 1);
+    }
+
     function revokeBlobs() {
-      for (const url of blobUrls) URL.revokeObjectURL(url);
-      blobUrls.length = 0;
+      for (const url of blobByPage.values()) URL.revokeObjectURL(url);
+      blobByPage.clear();
     }
 
     function resetLiveScale() {
@@ -147,125 +173,368 @@
       scrollKeepCentered(prevVW, prevVH, Math.max(viewW, nextVW), nextVH);
     }
 
-    async function paintPages(loadedUrl: string) {
-      const pdfjs = pdfjsMod;
-      const pdf = pdfDoc;
+    function applySlotWidth() {
       const root = host;
-      if (!pdfjs || !pdf || !root) return;
-      const scale = desiredScale;
-      if (scale < 0.05) return;
-      if (Math.abs(scale - paintedScale) < 0.002 && root.childElementCount) {
-        resetLiveScale();
-        return;
+      if (!root || !frame || !slot) return;
+      if (lastWidth > frame.clientWidth + 2) {
+        slot.style.width = `${lastWidth}px`;
+        root.style.width = `${lastWidth}px`;
+      } else {
+        slot.style.width = '';
+        root.style.width = '';
       }
-      const gen = ++paintGen;
-      cancelPageTasks();
-      const first = !root.childElementCount;
-      if (first) loading = true;
-      const frag = document.createDocumentFragment();
-      const nextBlobs: string[] = [];
+    }
+
+    function rebuildTops() {
+      pageTops = pageEls.map((el) => el.offsetTop);
+    }
+
+    function indexAt(y: number): number {
+      let lo = 0;
+      let hi = pageTops.length - 1;
+      let ans = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (pageTops[mid] <= y) {
+          ans = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return ans;
+    }
+
+    function visibleRange(): [number, number] {
+      const total = pageEls.length;
+      if (!total) return [1, 1];
+      if (!frame) return [1, Math.min(total, 3)];
+      if (pageTops.length !== total) rebuildTops();
+      const pageH = pageEls[0]?.offsetHeight || 800;
+      const top = frame.scrollTop - pageH;
+      const bottom = frame.scrollTop + frame.clientHeight + pageH;
+      const first = Math.max(0, indexAt(top));
+      const last = Math.min(total - 1, Math.max(first, indexAt(bottom)));
+      return [first + 1, last + 1];
+    }
+
+    function releaseFar(keep: Set<number>) {
+      for (const n of [...renderedFull]) {
+        if (keep.has(n)) continue;
+        const el = pageEls[n - 1];
+        el?.querySelector(':scope > img')?.remove();
+        el?.querySelector(':scope > canvas')?.remove();
+        const url = blobByPage.get(n);
+        if (url) URL.revokeObjectURL(url);
+        blobByPage.delete(n);
+        renderedFull.delete(n);
+      }
+    }
+
+    function noteWidth(cssW: number) {
+      if (cssW <= lastWidth) return;
+      lastWidth = cssW;
+      if (layoutCommitted) applySlotWidth();
+    }
+
+    async function drawPage(n: number, mode: 'full' | 'text', gen: number) {
+      const scale = paintedScale;
+      const pdf = pdfDoc;
+      const pdfjs = pdfjsMod;
+      const el = pageEls[n - 1];
+      if (!pdf || !pdfjs || !el || gen !== paintGen) return;
+      if (mode === 'text' && (renderedText.has(n) || failedText.has(n))) return;
+      if (mode === 'full' && (renderedFull.has(n) || failedFull.has(n))) return;
+      let page: any = null;
       try {
-        const maxPages = Math.min(pdf.numPages, 200);
-        for (let n = 1; n <= maxPages; n++) {
-          if (cancelled || gen !== paintGen) return;
-          const page = await pdf.getPage(n);
-          const viewport = page.getViewport({ scale });
-          const cssW = Math.floor(viewport.width);
-          const cssH = Math.floor(viewport.height);
-          const wrap = document.createElement('div');
-          wrap.className = 'pdf-page';
-          wrap.style.setProperty('--scale-factor', String(scale));
-          wrap.style.width = `${cssW}px`;
-          wrap.style.height = `${cssH}px`;
-          const canvas = document.createElement('canvas');
-          const outputScale = window.devicePixelRatio || 1;
-          canvas.width = Math.floor(viewport.width * outputScale);
-          canvas.height = Math.floor(viewport.height * outputScale);
-          canvas.style.width = `${cssW}px`;
-          canvas.style.height = `${cssH}px`;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) continue;
-          const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
-          const renderTask = page.render({ canvas, viewport, transform });
-          pageTasks.push(renderTask);
-          await renderTask.promise;
-          if (cancelled || gen !== paintGen) return;
-          const textDiv = document.createElement('div');
-          textDiv.className = 'textLayer';
+        page = await pdf.getPage(n);
+        if (cancelled || gen !== paintGen || !page) return;
+        const viewport = page.getViewport({ scale });
+        const cssW = Math.floor(viewport.width);
+        const cssH = Math.floor(viewport.height);
+        const prevH = el.offsetHeight;
+        el.style.setProperty('--scale-factor', String(scale));
+        el.style.width = `${cssW}px`;
+        el.style.height = `${cssH}px`;
+        pageTops = [];
+        noteWidth(cssW);
+        const delta = cssH - prevH;
+        if (el.isConnected && frame && delta && el.offsetTop + prevH <= frame.scrollTop) {
+          frame.scrollTop += delta;
+        }
+
+        if (!renderedText.has(n) && !failedText.has(n)) {
+          let textDiv = el.querySelector(':scope > .textLayer') as HTMLDivElement | null;
+          if (!textDiv) {
+            textDiv = document.createElement('div');
+            textDiv.className = 'textLayer';
+            el.append(textDiv);
+          } else {
+            textDiv.replaceChildren();
+          }
           const textContent = await page.getTextContent();
+          if (cancelled || gen !== paintGen) return;
           const layer = new pdfjs.TextLayer({
             textContentSource: textContent,
             container: textDiv,
             viewport,
           });
-          pageTasks.push(layer);
-          await layer.render();
-          const blob = await new Promise<Blob | null>((resolve) => {
-            canvas.toBlob(resolve, 'image/png');
-          });
-          if (cancelled || gen !== paintGen) return;
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            nextBlobs.push(url);
-            const img = document.createElement('img');
-            img.src = url;
-            img.alt = `Page ${n}`;
-            img.draggable = true;
-            img.style.width = `${cssW}px`;
-            img.style.height = `${cssH}px`;
-            wrap.append(img, textDiv);
-          } else {
-            wrap.append(canvas, textDiv);
+          track(layer);
+          try {
+            await layer.render();
+          } finally {
+            untrack(layer);
           }
-          frag.append(wrap);
+          if (cancelled || gen !== paintGen) return;
+          renderedText.add(n);
         }
-        if (cancelled || gen !== paintGen) {
-          for (const url of nextBlobs) URL.revokeObjectURL(url);
+
+        if (mode !== 'full' || renderedFull.has(n) || failedFull.has(n)) return;
+        if (!wantFull.has(n)) return;
+        const canvas = document.createElement('canvas');
+        const outputScale = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          failedFull.add(n);
           return;
         }
-        root.replaceChildren(frag);
-        revokeBlobs();
-        blobUrls.push(...nextBlobs);
-        resetLiveScale();
-        const firstPage = root.querySelector('.pdf-page') as HTMLElement | null;
-        lastWidth = firstPage ? firstPage.offsetWidth : Math.floor(pageWidthPt * scale);
-        paintedScale = scale;
-        paintedHeight = root.scrollHeight;
-        if (frame && slot && lastWidth > frame.clientWidth + 2) {
-          slot.style.width = `${lastWidth}px`;
-          root.style.width = `${lastWidth}px`;
-        } else if (slot) {
-          slot.style.width = '';
-          root.style.width = '';
+        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
+        const renderTask = page.render({ canvas, viewport, transform });
+        track(renderTask);
+        try {
+          await renderTask.promise;
+        } finally {
+          untrack(renderTask);
         }
-        loading = false;
-        requestAnimationFrame(() => {
-          if (cancelled || gen !== paintGen || !frame) return;
-          if (lastWidth > frame.clientWidth) {
-            frame.scrollLeft = (lastWidth - frame.clientWidth) / 2;
-          } else {
-            frame.scrollLeft = 0;
-          }
-          requestAnimationFrame(() => {
-            if (cancelled || gen !== paintGen) return;
-            onReady?.(root);
-            onSettled?.(loadedUrl);
-          });
+        if (cancelled || gen !== paintGen || !wantFull.has(n)) return;
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob(resolve, 'image/png');
         });
-      } catch (e) {
+        if (cancelled || gen !== paintGen || !wantFull.has(n)) return;
+        el.querySelector(':scope > img')?.remove();
+        el.querySelector(':scope > canvas')?.remove();
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const prev = blobByPage.get(n);
+          if (prev) URL.revokeObjectURL(prev);
+          blobByPage.set(n, url);
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = `Page ${n}`;
+          img.draggable = true;
+          img.style.width = `${cssW}px`;
+          img.style.height = `${cssH}px`;
+          el.insertBefore(img, el.firstChild);
+        } else {
+          el.insertBefore(canvas, el.firstChild);
+        }
+        renderedFull.add(n);
+        if (host) paintedHeight = host.scrollHeight;
+        notifyFirst?.();
+      } catch {
         if (cancelled || gen !== paintGen) return;
-        if (first) {
-          loading = false;
-          error = e instanceof Error ? e.message : String(e);
-          onSettled?.(loadedUrl);
+        if (mode === 'full') failedFull.add(n);
+        else failedText.add(n);
+        notifyFirst?.();
+      } finally {
+        try {
+          page?.cleanup?.();
+        } catch {
+          /* ignore */
         }
       }
+    }
+
+    function hasPending(): boolean {
+      for (const n of wantFull) {
+        if (!renderedFull.has(n) && !failedFull.has(n)) return true;
+      }
+      return Boolean(pdfDoc && textCursor <= pdfDoc.numPages);
+    }
+
+    async function pumpOnce(gen: number): Promise<boolean> {
+      if (gen !== paintGen || !pdfDoc) return false;
+      const nextFull = [...wantFull].find((n) => !renderedFull.has(n) && !failedFull.has(n));
+      if (nextFull) {
+        await drawPage(nextFull, 'full', gen);
+        return gen === paintGen;
+      }
+      if (textCursor <= pdfDoc.numPages) {
+        const n = textCursor;
+        textCursor += 1;
+        if (!renderedText.has(n) && !failedText.has(n)) await drawPage(n, 'text', gen);
+        return gen === paintGen;
+      }
+      return false;
+    }
+
+    function kickPump() {
+      if (pumping) {
+        pumpAgain = true;
+        return;
+      }
+      pumping = true;
+      void runPump();
+    }
+
+    async function runPump() {
+      const gen = paintGen;
+      try {
+        while (!cancelled && gen === paintGen) {
+          const more = await pumpOnce(gen);
+          if (!more || !hasPending()) break;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        if (!cancelled && gen === paintGen && pdfDoc && textCursor > pdfDoc.numPages && textDoneGen !== gen) {
+          textDoneGen = gen;
+          const root = host;
+          const first = pageEls[0];
+          if (root && first?.isConnected) onReady?.(root);
+        }
+      } finally {
+        pumping = false;
+        if (!cancelled && gen === paintGen && (pumpAgain || hasPending())) {
+          pumpAgain = false;
+          kickPump();
+        }
+      }
+    }
+
+    function syncWindow() {
+      if (!layoutCommitted || !pdfDoc || pageEls.length === 0 || Math.abs(liveFit - 1) > 0.002) return;
+      const [start, end] = visibleRange();
+      const keep = new Set<number>();
+      for (let n = start; n <= end; n++) keep.add(n);
+      releaseFar(keep);
+      wantFull.clear();
+      for (const n of keep) {
+        if (!renderedFull.has(n) && !failedFull.has(n)) wantFull.add(n);
+      }
+      kickPump();
+    }
+
+    function makeShells(scale: number, cssW: number, cssH: number, count: number): HTMLDivElement[] {
+      const shells: HTMLDivElement[] = [];
+      for (let n = 1; n <= count; n++) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pdf-page';
+        wrap.dataset.pageNumber = `Page ${n}`;
+        wrap.style.setProperty('--scale-factor', String(scale));
+        wrap.style.width = `${cssW}px`;
+        wrap.style.height = `${cssH}px`;
+        shells.push(wrap);
+      }
+      return shells;
+    }
+
+    function clearPageState() {
+      renderedFull.clear();
+      renderedText.clear();
+      failedFull.clear();
+      failedText.clear();
+      wantFull.clear();
+      textCursor = 1;
+      textDoneGen = -1;
+      pageTops = [];
+    }
+
+    async function paintPages(loadedUrl: string) {
+      const pdf = pdfDoc;
+      const root = host;
+      if (!pdfjsMod || !pdf || !root) return;
+      const scale = desiredScale;
+      if (scale < 0.05) return;
+      if (cancelled || loadedUrl !== activeUrl) return;
+      if (Math.abs(scale - paintedScale) < 0.002 && pageEls.length === pdf.numPages && root.childElementCount) {
+        resetLiveScale();
+        syncWindow();
+        return;
+      }
+      const gen = ++paintGen;
+      cancelPageTasks();
+      layoutCommitted = false;
+      const switchingDoc = laidOutUrl !== loadedUrl;
+      const zoomed = Math.abs(liveFit - 1) > 0.002;
+      const savedTop = frame?.scrollTop ?? 0;
+      const savedHeight = Math.max(1, root.scrollHeight);
+      const [keepStart, keepEnd] =
+        switchingDoc || pageEls.length !== pdf.numPages ? [1, Math.min(3, pdf.numPages)] : visibleRange();
+      clearPageState();
+      const previousBlobs = new Map(blobByPage);
+      blobByPage.clear();
+      if (switchingDoc) loading = true;
+      const cssW = Math.max(1, Math.floor(pageWidthPt * scale));
+      const cssH = Math.max(1, Math.floor(pageHeightPt * scale));
+      const shells = makeShells(scale, cssW, cssH, pdf.numPages);
+      pageEls = shells;
+      paintedScale = scale;
+      lastWidth = cssW;
+      laidOutUrl = loadedUrl;
+      for (let n = keepStart; n <= keepEnd; n++) wantFull.add(n);
+      const firstReady = new Promise<void>((resolve) => {
+        const done = () => {
+          if (notifyFirst === done) notifyFirst = null;
+          window.clearTimeout(timer);
+          resolve();
+        };
+        notifyFirst = done;
+        const timer = window.setTimeout(done, 20000);
+        if (pdf.numPages === 0) done();
+      });
+      kickPump();
+      await firstReady;
+      if (cancelled || gen !== paintGen || loadedUrl !== activeUrl) {
+        if (gen === paintGen) {
+          paintGen += 1;
+          for (const url of blobByPage.values()) URL.revokeObjectURL(url);
+          blobByPage.clear();
+          for (const [pageNumber, url] of previousBlobs) blobByPage.set(pageNumber, url);
+        }
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const shell of shells) frag.append(shell);
+      root.replaceChildren(frag);
+      resetLiveScale();
+      for (const url of previousBlobs.values()) URL.revokeObjectURL(url);
+      applySlotWidth();
+      paintedHeight = root.scrollHeight;
+      rebuildTops();
+      layoutCommitted = true;
+      if (frame) {
+        if (switchingDoc) {
+          frame.scrollTop = 0;
+          if (lastWidth > frame.clientWidth) frame.scrollLeft = (lastWidth - frame.clientWidth) / 2;
+          else frame.scrollLeft = 0;
+        } else if (zoomed) {
+          frame.scrollTop = savedTop;
+        } else if (savedTop > 0) {
+          frame.scrollTop = savedTop * (root.scrollHeight / savedHeight);
+        }
+      }
+      loading = false;
+      syncWindow();
+      onReady?.(root);
+      onSettled?.(loadedUrl);
+    }
+
+    function enqueuePaint(url: string): Promise<void> {
+      const run = paintLock.then(() => paintPages(url));
+      paintLock = run.then(
+        () => {},
+        () => {},
+      );
+      return run;
     }
 
     function schedulePaint() {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
-        void paintPages(activeUrl);
+        void enqueuePaint(activeUrl);
       }, 220);
     }
 
@@ -321,16 +590,21 @@
         const unscaled = firstPage.getViewport({ scale: 1 });
         pageWidthPt = unscaled.width;
         pageHeightPt = unscaled.height;
+        try {
+          firstPage.cleanup?.();
+        } catch {
+          /* ignore */
+        }
         if (!zoomReady) {
           desiredScale = clampScale(fitHeightScale());
           zoomReady = true;
         }
         lastWidth = 0;
         paintedScale = 0;
-        await paintPages(url);
+        await enqueuePaint(url);
         if (cancelled || gen !== loadGen) return;
         loading = false;
-        if (frame) frame.scrollTop = 0;
+        if (frame && laidOutUrl === url) frame.scrollTop = 0;
         try {
           await (previous as { destroy?: () => Promise<void> | void } | null)?.destroy?.();
         } catch {
@@ -357,6 +631,16 @@
       schedulePaint();
     }
 
+    function onFrameScroll() {
+      if (Math.abs(liveFit - 1) > 0.002) return;
+      if (scrollQueued) return;
+      scrollQueued = true;
+      requestAnimationFrame(() => {
+        scrollQueued = false;
+        syncWindow();
+      });
+    }
+
     const ro = new ResizeObserver(() => {
       if (!pdfDoc) return;
       if (!userHasZoomed) {
@@ -371,6 +655,7 @@
       if (frame) {
         ro.observe(frame);
         frame.addEventListener('wheel', onWheel, { passive: false });
+        frame.addEventListener('scroll', onFrameScroll, { passive: true });
       }
     };
     attachObserver();
@@ -379,9 +664,11 @@
 
     return () => {
       cancelled = true;
+      paintGen += 1;
       window.clearTimeout(resizeTimer);
       ro.disconnect();
       frame?.removeEventListener('wheel', onWheel);
+      frame?.removeEventListener('scroll', onFrameScroll);
       cancelPageTasks();
       revokeBlobs();
       for (const task of lifetime) {
