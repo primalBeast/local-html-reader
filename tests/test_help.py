@@ -59,6 +59,9 @@ def test_pdf_viewer_is_not_capped_at_200_pages() -> None:
     assert "PDFFindController" in src
     assert "pdfjsLib" in src
     assert "import { EventBus" not in src
+    assert "countLoadedPages" in src
+    app = Path("frontend/src/App.svelte").read_text(encoding="utf-8")
+    assert "formatPageLoad" in app
 
 
 def test_frontend_find_cap_matches() -> None:

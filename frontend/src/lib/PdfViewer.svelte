@@ -21,7 +21,7 @@
     overlay = false,
     onReady,
     onSettled,
-    onPageCount,
+    onPageProgress,
     onApi,
     onPdfFind,
   }: {
@@ -29,7 +29,7 @@
     overlay?: boolean;
     onReady?: (root: HTMLElement) => void;
     onSettled?: (src: string) => void;
-    onPageCount?: (pages: number, src: string) => void;
+    onPageProgress?: (loaded: number, total: number, src: string) => void;
     onApi?: (api: PdfFindApi) => void;
     onPdfFind?: (info: { layer: PdfFindLayer; current: number; total: number; pending: boolean }) => void;
   } = $props();
@@ -195,6 +195,21 @@
       for (const fn of queued) fn();
     }
 
+    async function countLoadedPages(pdf: { numPages: number; getPage: (n: number) => Promise<unknown> }, gen: number, url: string) {
+      const total = pdf.numPages;
+      for (let n = 1; n <= total; n++) {
+        if (cancelled || gen !== loadGen || url !== activeUrl) return;
+        try {
+          await pdf.getPage(n);
+        } catch {
+          /* keep counting so the label can finish */
+        }
+        if (cancelled || gen !== loadGen || url !== activeUrl) return;
+        onPageProgress?.(n, total, url);
+        if (n % 12 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
     loadUrl = async (url: string) => {
       activeUrl = url;
       const gen = ++loadGen;
@@ -225,7 +240,7 @@
           return;
         }
         pdfDoc = pdf;
-        onPageCount?.(pdf.numPages, url);
+        onPageProgress?.(0, pdf.numPages, url);
         linkService.setDocument(pdf);
         pdfViewer.setDocument(pdf);
         const ready = pdfViewer.onePageRendered;
@@ -233,10 +248,13 @@
           void ready.then(() => {
             if (cancelled || gen !== loadGen || url !== activeUrl) return;
             loading = false;
+            void countLoadedPages(pdf, gen, url);
             flushFind();
             if (host) onReady?.(host);
             onSettled?.(url);
           });
+        } else {
+          void countLoadedPages(pdf, gen, url);
         }
         try {
           await previous?.cleanup?.();

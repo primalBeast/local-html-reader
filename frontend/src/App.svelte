@@ -408,6 +408,14 @@
     return estimated ? `about ${n} ${word}` : `${n} ${word}`;
   }
 
+  const pageNum = new Intl.NumberFormat('en-CA');
+
+  function formatPageLoad(loaded: number, total: number): string {
+    const all = pageNum.format(Math.max(0, total));
+    if (loaded >= total) return all;
+    return `${pageNum.format(Math.max(0, loaded))} / ${all}`;
+  }
+
   function estimatePrintedPages(doc: Document): number {
     const text = (doc.body?.innerText || '').replace(/\s+/g, ' ').trim();
     if (!text) return 1;
@@ -1220,10 +1228,10 @@
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
   }
 
-  function onPdfPageCount(pages: number, src: string) {
+  function onPdfPageProgress(loaded: number, total: number, src: string) {
     if (!selected || !isPdfHit(selected)) return;
     if (viewUrl(selected.root_id, selected.rel) !== src) return;
-    pageSummary = formatPages(pages, false);
+    pageSummary = formatPageLoad(loaded, total);
   }
 
   function onPdfSettled(src: string) {
@@ -1829,7 +1837,7 @@
               overlay={Boolean(heldHtml)}
               onReady={onPdfReady}
               onSettled={onPdfSettled}
-              onPageCount={onPdfPageCount}
+              onPageProgress={onPdfPageProgress}
               onApi={onPdfApi}
               onPdfFind={onPdfFindUpdate}
             />

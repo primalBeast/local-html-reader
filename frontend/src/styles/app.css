@@ -931,6 +931,7 @@ input[type="text"]:focus {
 .doc-pages {
   font-family: var(--mono);
   font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   line-height: 1.2;
 }
