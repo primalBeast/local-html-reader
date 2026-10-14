@@ -91,8 +91,8 @@ def help_document() -> dict:
                 "extensions": _exts(PDF_SUFFIXES),
                 "limits": [
                     f"Searched and opened up to {file_mb} MB.",
-                    "Every page is shown. The page on screen is drawn as you scroll.",
-                    "Find in page searches every page, not only the ones on screen.",
+                    "Every page is shown. Only the pages on screen are drawn, the same way a browser does it.",
+                    "Find searches the whole file in the background and jumps to the match. It does not draw every page first.",
                 ],
             },
             {

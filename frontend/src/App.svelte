@@ -5,7 +5,7 @@
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
   import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type SearchWorker, type Settings, type TreeNode } from './lib/api';
-  import PdfViewer from './lib/PdfViewer.svelte';
+  import PdfViewer, { type PdfFindApi, type PdfFindLayer } from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
   import HelpDialog from './lib/HelpDialog.svelte';
@@ -161,6 +161,11 @@
   let pageFindParallel = $state(false);
   let pageFindThreads = $state(0);
   let pageMatchCount = $state(0);
+  let pdfListCurrent = $state(0);
+  let pdfListTotal = $state(0);
+  let pdfPageCurrent = $state(0);
+  let pdfPageTotal = $state(0);
+  let pdfApi: PdfFindApi | null = null;
   let pageFindInput = $state<HTMLInputElement | null>(null);
 
   const SIDEBAR_DEFAULT = 320;
@@ -384,11 +389,12 @@
     if (!selected || !appliedQuery) return;
     const leftFlags = searchFlagKey(treeRegex, treeMatchCase, treeWholeWord);
     let count: number | null = null;
-    if (countedListQuery === appliedQuery && countedListFlags === leftFlags) {
-      count = listMarks.length;
-    }
-    if (countedPageQuery === appliedQuery && countedPageFlags === leftFlags) {
-      count = pageMarks.length;
+    if (isPdfHit(selected)) {
+      if (countedListQuery === appliedQuery && countedListFlags === leftFlags) count = pdfListTotal;
+      if (countedPageQuery === appliedQuery && countedPageFlags === leftFlags) count = pdfPageTotal;
+    } else {
+      if (countedListQuery === appliedQuery && countedListFlags === leftFlags) count = listMarks.length;
+      if (countedPageQuery === appliedQuery && countedPageFlags === leftFlags) count = pageMarks.length;
     }
     if (count === null) return;
     const current = matchCountOf(tree, selected.root_id, selected.rel);
@@ -687,6 +693,10 @@
     else if (!isPdfHit(doc)) heldHtml = null;
     selected = doc;
     pdfRootEl = null;
+    pdfListCurrent = 0;
+    pdfListTotal = 0;
+    pdfPageCurrent = 0;
+    pdfPageTotal = 0;
     pageQuery = '';
     pageMarks = [];
     pageIndex = 0;
@@ -998,6 +1008,33 @@
       pageMatchCount = 0;
     }
     clearTimeout(docFindTimer);
+    if (isPdfHit(selected) && pdfApi) {
+      const runPdf = () => {
+        if (gen !== docFindGen || !pdfApi) return;
+        if (which === 'list' || which === 'both') {
+          if (listQuery.trim()) {
+            pdfApi.search('list', listQuery, { regex: treeRegex, matchCase: treeMatchCase, wholeWord: treeWholeWord });
+          } else {
+            pdfApi.clear('list');
+            listFinding = false;
+          }
+        }
+        if (which === 'page' || which === 'both') {
+          if (pageQuery.trim()) {
+            pdfApi.search('page', pageQuery, { regex: pageRegex, matchCase: pageMatchCase, wholeWord: pageWholeWord });
+          } else {
+            pdfApi.clear('page');
+            pageFinding = false;
+          }
+        }
+      };
+      if (!listQuery.trim() && !pageQuery.trim()) {
+        runPdf();
+        return;
+      }
+      docFindTimer = setTimeout(runPdf, 40);
+      return;
+    }
     const run = () => {
       void runAllFinds(focusList, gen).finally(() => {
         if (gen !== docFindGen) return;
@@ -1035,6 +1072,11 @@
   }
 
   function listFindNext() {
+    if (isPdfHit(selected)) {
+      if (!pdfListTotal) scheduleDocFind(true, 'list');
+      else pdfApi?.again('list', false);
+      return;
+    }
     if (listMarks.length === 0) {
       scheduleDocFind(true, 'list');
       return;
@@ -1043,6 +1085,11 @@
   }
 
   function listFindPrev() {
+    if (isPdfHit(selected)) {
+      if (!pdfListTotal) scheduleDocFind(true, 'list');
+      else pdfApi?.again('list', true);
+      return;
+    }
     if (listMarks.length === 0) {
       scheduleDocFind(true, 'list');
       return;
@@ -1051,6 +1098,11 @@
   }
 
   function pageFindNext() {
+    if (isPdfHit(selected)) {
+      if (!pdfPageTotal) scheduleDocFind(false, 'page');
+      else pdfApi?.again('page', false);
+      return;
+    }
     if (pageMarks.length === 0) {
       scheduleDocFind(false, 'page');
       return;
@@ -1059,6 +1111,11 @@
   }
 
   function pageFindPrev() {
+    if (isPdfHit(selected)) {
+      if (!pdfPageTotal) scheduleDocFind(false, 'page');
+      else pdfApi?.again('page', true);
+      return;
+    }
     if (pageMarks.length === 0) {
       scheduleDocFind(false, 'page');
       return;
@@ -1113,6 +1170,44 @@
       if (menu.text) await copyToClipboard(menu.text);
     }
     htmlCopyMenu = null;
+  }
+
+  function onPdfApi(api: PdfFindApi) {
+    pdfApi = api;
+  }
+
+  function onPdfFindUpdate(info: { layer: PdfFindLayer; current: number; total: number; pending: boolean }) {
+    if (info.layer === 'list') {
+      pdfListCurrent = info.current;
+      pdfListTotal = info.total;
+      listMatchCount = info.total;
+      listFinding = info.pending;
+    } else {
+      pdfPageCurrent = info.current;
+      pdfPageTotal = info.total;
+      pageMatchCount = info.total;
+      pageFinding = info.pending;
+    }
+    if (!info.pending) {
+      noteFindCounts();
+      syncOpenFileMatchCount();
+    }
+  }
+
+  function findPos(layer: 'list' | 'page'): string {
+    if (isPdfHit(selected)) {
+      const total = layer === 'list' ? pdfListTotal : pdfPageTotal;
+      const pos = layer === 'list' ? pdfListCurrent : pdfPageCurrent;
+      return total ? `${pos} / ${total}` : '0 / 0';
+    }
+    const marks = layer === 'list' ? listMarks : pageMarks;
+    const index = layer === 'list' ? listIndex : pageIndex;
+    return marks.length ? `${index + 1} / ${marks.length}` : '0 / 0';
+  }
+
+  function findHasHits(layer: 'list' | 'page'): boolean {
+    if (isPdfHit(selected)) return (layer === 'list' ? pdfListTotal : pdfPageTotal) > 0;
+    return (layer === 'list' ? listMarks : pageMarks).length > 0;
   }
 
   function onPdfReady(root: HTMLElement) {
@@ -1624,7 +1719,7 @@
               }}
             >
               <span class="find-count">
-                {listMarks.length ? `${listIndex + 1} / ${listMarks.length}` : '0 / 0'}
+                {findPos('list')}
               </span>
               <SearchField
                 value={listQuery}
@@ -1662,7 +1757,7 @@
                   else if (listQuery.trim()) commitListSearch();
                 }}
               />
-              <button class="btn-ghost btn-small" type="button" onclick={listFindPrev} disabled={!listMarks.length}>Prev</button>
+              <button class="btn-ghost btn-small" type="button" onclick={listFindPrev} disabled={!findHasHits('list')}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!listQuery.trim()}>Next</button>
             </form>
             <form
@@ -1709,9 +1804,9 @@
                 }}
               />
               <span class="find-count">
-                {pageMarks.length ? `${pageIndex + 1} / ${pageMarks.length}` : '0 / 0'}
+                {findPos('page')}
               </span>
-              <button class="btn-ghost btn-small" type="button" onclick={pageFindPrev} disabled={!pageMarks.length}>Prev</button>
+              <button class="btn-ghost btn-small" type="button" onclick={pageFindPrev} disabled={!findHasHits('page')}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!pageQuery.trim()}>Next</button>
             </form>
           </div>
@@ -1735,6 +1830,8 @@
               onReady={onPdfReady}
               onSettled={onPdfSettled}
               onPageCount={onPdfPageCount}
+              onApi={onPdfApi}
+              onPdfFind={onPdfFindUpdate}
             />
           {/if}
         </div>

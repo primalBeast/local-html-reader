@@ -55,8 +55,8 @@ def test_help_lists_every_supported_extension_once() -> None:
 def test_pdf_viewer_is_not_capped_at_200_pages() -> None:
     src = Path("frontend/src/lib/PdfViewer.svelte").read_text(encoding="utf-8")
     assert "Math.min(pdf.numPages, 200)" not in src
-    assert "indexAllText" in src
-    assert "pdf.numPages" in src
+    assert "PDFViewer" in src
+    assert "PDFFindController" in src
 
 
 def test_frontend_find_cap_matches() -> None:
