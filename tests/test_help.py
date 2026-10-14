@@ -57,6 +57,8 @@ def test_pdf_viewer_is_not_capped_at_200_pages() -> None:
     assert "Math.min(pdf.numPages, 200)" not in src
     assert "PDFViewer" in src
     assert "PDFFindController" in src
+    assert "pdfjsLib" in src
+    assert "import { EventBus" not in src
 
 
 def test_frontend_find_cap_matches() -> None:

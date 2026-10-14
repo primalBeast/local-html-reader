@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import CopyPopup from './CopyPopup.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './wordAtPoint';
-  import { EventBus, FindState, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
+  import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 
   const TEXT_LAYER = 1;
   const ANNOTATIONS = 1;
@@ -68,8 +68,8 @@
     let pdfViewer: PDFViewer | null = null;
     let eventBus: EventBus | null = null;
     let linkService: PDFLinkService | null = null;
-    let findController: AppFindController | null = null;
-    let FindStatePending = FindState.PENDING;
+    let findController: (PDFFindController & { useRegex: boolean }) | null = null;
+    let FindStatePending = -1;
 
     function report(layer: PdfFindLayer, current: number, total: number, pending: boolean) {
       onPdfFind?.({ layer, current, total, pending });
@@ -143,17 +143,20 @@
     async function ensureEngine() {
       if (pdfjsMod && pdfWorker && pdfViewer) return pdfjsMod;
       const pdfjs = await import('pdfjs-dist');
+      // The viewer bundle reads this global while it loads. Set it before that import.
+      (globalThis as typeof globalThis & { pdfjsLib: typeof pdfjs }).pdfjsLib = pdfjs;
+      const viewer = await import('pdfjs-dist/web/pdf_viewer.mjs');
       const WorkerCtor = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')).default;
       const port = new WorkerCtor();
       const worker = pdfjs.PDFWorker.create({ port });
       pdfjsMod = pdfjs;
       pdfWorker = worker;
       if (!frame || !host) return pdfjs;
-      const bus = new EventBus();
-      const links = new PDFLinkService({ eventBus: bus });
+      const bus = new viewer.EventBus();
+      const links = new viewer.PDFLinkService({ eventBus: bus });
       links.externalLinkEnabled = false;
-      const finder = new AppFindController({ linkService: links, eventBus: bus, delay: 0 });
-      const view = new PDFViewer({
+      const finder = makeFinder(viewer.PDFFindController, links, bus);
+      const view = new viewer.PDFViewer({
         container: frame,
         viewer: host,
         eventBus: bus,
@@ -178,7 +181,7 @@
         if (userHasZoomed) pdfViewer.currentScale = userScale;
         else pdfViewer.currentScaleValue = 'page-fit';
       });
-      FindStatePending = FindState.PENDING;
+      FindStatePending = viewer.FindState.PENDING;
       eventBus = bus;
       linkService = links;
       findController = finder;
@@ -356,12 +359,20 @@
     destroy: () => {},
   };
 
-  class AppFindController extends PDFFindController {
-    useRegex = false;
-    override match(query: string | string[], pageContent: string, pageIndex: number) {
+  function makeFinder(
+    Base: new (opts: { linkService: PDFLinkService; eventBus: EventBus; delay?: number }) => PDFFindController,
+    links: PDFLinkService,
+    bus: EventBus,
+  ): PDFFindController & { useRegex: boolean } {
+    const finder = new Base({ linkService: links, eventBus: bus, delay: 0 }) as PDFFindController & {
+      useRegex: boolean;
+    };
+    const stockMatch = finder.match.bind(finder);
+    finder.useRegex = false;
+    finder.match = function (query, pageContent, pageIndex) {
       const state = this.state as { query?: string | string[]; caseSensitive?: boolean; entireWord?: boolean } | null;
       if (!this.useRegex || !state || typeof state.query !== 'string') {
-        return super.match(query, pageContent, pageIndex);
+        return stockMatch(query, pageContent, pageIndex);
       }
       let re: RegExp;
       try {
@@ -381,7 +392,8 @@
         matches.push({ index: found.index, length: found[0].length });
       }
       return matches;
-    }
+    };
+    return finder;
   }
 
   function wholeWordAt(content: string, start: number, length: number): boolean {
