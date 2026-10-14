@@ -23,9 +23,13 @@
   let error = $state<string | null>(null);
   let loading = $state(true);
   let viewerReady = $state(false);
-  let copyMenu = $state<{ x: number; y: number; text: string; image: HTMLImageElement | null } | null>(
-    null,
-  );
+  let copyMenu = $state<{
+    x: number;
+    y: number;
+    text: string;
+    image: HTMLImageElement | null;
+    canvas: HTMLCanvasElement | null;
+  } | null>(null);
 
   let loadUrl: (url: string) => Promise<void> = async () => {};
 
@@ -57,11 +61,11 @@
     const failedText = new Set<number>();
     const blobByPage = new Map<number, string>();
     const wantFull = new Set<number>();
-    let textCursor = 1;
-    let pumping = false;
-    let pumpAgain = false;
+    let textReadyPending = false;
+    let textNotifiedGen = -1;
+    const pageChain = new Map<number, Promise<unknown>>();
+    const bitmapTasks = new Map<number, { cancel?: () => void }>();
     let laidOutUrl = '';
-    let textDoneGen = -1;
     let notifyFirst: (() => void) | null = null;
     let scrollQueued = false;
     let paintLock: Promise<void> = Promise.resolve();
@@ -218,62 +222,75 @@
       return [first + 1, last + 1];
     }
 
-    function releaseFar(keep: Set<number>) {
-      for (const n of [...renderedFull]) {
-        if (keep.has(n)) continue;
-        const el = pageEls[n - 1];
-        el?.querySelector(':scope > img')?.remove();
-        el?.querySelector(':scope > canvas')?.remove();
-        const url = blobByPage.get(n);
-        if (url) URL.revokeObjectURL(url);
-        blobByPage.delete(n);
-        renderedFull.delete(n);
-      }
-    }
-
     function noteWidth(cssW: number) {
       if (cssW <= lastWidth) return;
       lastWidth = cssW;
       if (layoutCommitted) applySlotWidth();
     }
 
-    async function drawPage(n: number, mode: 'full' | 'text', gen: number) {
-      const scale = paintedScale;
-      const pdf = pdfDoc;
+    function fitShell(el: HTMLDivElement, cssW: number, cssH: number) {
+      const prevH = el.offsetHeight;
+      el.style.setProperty('--scale-factor', String(paintedScale));
+      el.style.width = `${cssW}px`;
+      el.style.height = `${cssH}px`;
+      pageTops = [];
+      noteWidth(cssW);
+      const delta = cssH - prevH;
+      if (el.isConnected && frame && delta && el.offsetTop + prevH <= frame.scrollTop) {
+        frame.scrollTop += delta;
+      }
+    }
+
+    function enqueuePageJob(n: number, job: (page: any) => Promise<void>): Promise<void> {
+      const prev = pageChain.get(n) ?? Promise.resolve();
+      const run = prev.then(async () => {
+        const pdf = pdfDoc;
+        if (!pdf || cancelled) return;
+        const page = await pdf.getPage(n);
+        try {
+          await job(page);
+        } finally {
+          try {
+            page.cleanup?.();
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+      pageChain.set(
+        n,
+        run.then(
+          () => {},
+          () => {},
+        ),
+      );
+      return run;
+    }
+
+    async function ensureText(n: number, gen: number): Promise<void> {
+      if (renderedText.has(n) || failedText.has(n) || gen !== paintGen) return;
       const pdfjs = pdfjsMod;
       const el = pageEls[n - 1];
-      if (!pdf || !pdfjs || !el || gen !== paintGen) return;
-      if (mode === 'text' && (renderedText.has(n) || failedText.has(n))) return;
-      if (mode === 'full' && (renderedFull.has(n) || failedFull.has(n))) return;
-      let page: any = null;
+      if (!pdfjs || !el) return;
       try {
-        page = await pdf.getPage(n);
-        if (cancelled || gen !== paintGen || !page) return;
-        const viewport = page.getViewport({ scale });
-        const cssW = Math.floor(viewport.width);
-        const cssH = Math.floor(viewport.height);
-        const prevH = el.offsetHeight;
-        el.style.setProperty('--scale-factor', String(scale));
-        el.style.width = `${cssW}px`;
-        el.style.height = `${cssH}px`;
-        pageTops = [];
-        noteWidth(cssW);
-        const delta = cssH - prevH;
-        if (el.isConnected && frame && delta && el.offsetTop + prevH <= frame.scrollTop) {
-          frame.scrollTop += delta;
-        }
-
-        if (!renderedText.has(n) && !failedText.has(n)) {
+        await enqueuePageJob(n, async (page) => {
+          if (gen !== paintGen || renderedText.has(n) || failedText.has(n)) return;
+          const viewport = page.getViewport({ scale: paintedScale });
+          const cssW = Math.floor(viewport.width);
+          const cssH = Math.floor(viewport.height);
+          fitShell(el, cssW, cssH);
           let textDiv = el.querySelector(':scope > .textLayer') as HTMLDivElement | null;
+          if (textDiv && textDiv.childElementCount) {
+            renderedText.add(n);
+            return;
+          }
           if (!textDiv) {
             textDiv = document.createElement('div');
             textDiv.className = 'textLayer';
             el.append(textDiv);
-          } else {
-            textDiv.replaceChildren();
           }
           const textContent = await page.getTextContent();
-          if (cancelled || gen !== paintGen) return;
+          if (gen !== paintGen) return;
           const layer = new pdfjs.TextLayer({
             textContentSource: textContent,
             container: textDiv,
@@ -285,136 +302,191 @@
           } finally {
             untrack(layer);
           }
-          if (cancelled || gen !== paintGen) return;
-          renderedText.add(n);
-        }
-
-        if (mode !== 'full' || renderedFull.has(n) || failedFull.has(n)) return;
-        if (!wantFull.has(n)) return;
-        const canvas = document.createElement('canvas');
-        const outputScale = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = `${cssW}px`;
-        canvas.style.height = `${cssH}px`;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          failedFull.add(n);
-          return;
-        }
-        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
-        const renderTask = page.render({ canvas, viewport, transform });
-        track(renderTask);
-        try {
-          await renderTask.promise;
-        } finally {
-          untrack(renderTask);
-        }
-        if (cancelled || gen !== paintGen || !wantFull.has(n)) return;
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob(resolve, 'image/png');
+          if (gen === paintGen) renderedText.add(n);
         });
-        if (cancelled || gen !== paintGen || !wantFull.has(n)) return;
-        el.querySelector(':scope > img')?.remove();
-        el.querySelector(':scope > canvas')?.remove();
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const prev = blobByPage.get(n);
-          if (prev) URL.revokeObjectURL(prev);
-          blobByPage.set(n, url);
-          const img = document.createElement('img');
-          img.src = url;
-          img.alt = `Page ${n}`;
-          img.draggable = true;
-          img.style.width = `${cssW}px`;
-          img.style.height = `${cssH}px`;
-          el.insertBefore(img, el.firstChild);
-        } else {
-          el.insertBefore(canvas, el.firstChild);
-        }
-        renderedFull.add(n);
-        if (host) paintedHeight = host.scrollHeight;
-        notifyFirst?.();
       } catch {
-        if (cancelled || gen !== paintGen) return;
-        if (mode === 'full') failedFull.add(n);
-        else failedText.add(n);
-        notifyFirst?.();
-      } finally {
-        try {
-          page?.cleanup?.();
-        } catch {
-          /* ignore */
-        }
+        if (gen === paintGen) failedText.add(n);
       }
     }
 
-    function hasPending(): boolean {
+    async function ensureBitmap(n: number, gen: number): Promise<void> {
+      if (renderedFull.has(n) || failedFull.has(n) || gen !== paintGen) return;
+      const el = pageEls[n - 1];
+      if (!el) return;
+      try {
+        await enqueuePageJob(n, async (page) => {
+          if (gen !== paintGen || renderedFull.has(n) || !wantFull.has(n)) return;
+          const viewport = page.getViewport({ scale: paintedScale });
+          const cssW = Math.floor(viewport.width);
+          const cssH = Math.floor(viewport.height);
+          fitShell(el, cssW, cssH);
+          const canvas = document.createElement('canvas');
+          const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = Math.floor(viewport.width * outputScale);
+          canvas.height = Math.floor(viewport.height * outputScale);
+          canvas.style.width = `${cssW}px`;
+          canvas.style.height = `${cssH}px`;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            failedFull.add(n);
+            return;
+          }
+          const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
+          const renderTask = page.render({ canvas, viewport, transform });
+          track(renderTask);
+          bitmapTasks.set(n, renderTask);
+          try {
+            await renderTask.promise;
+          } catch {
+            if (gen === paintGen && wantFull.has(n)) failedFull.add(n);
+            return;
+          } finally {
+            untrack(renderTask);
+            if (bitmapTasks.get(n) === renderTask) bitmapTasks.delete(n);
+          }
+          if (gen !== paintGen || !wantFull.has(n)) return;
+          el.querySelector(':scope > canvas')?.remove();
+          el.querySelector(':scope > img')?.remove();
+          canvas.setAttribute('aria-label', `Page ${n}`);
+          el.insertBefore(canvas, el.firstChild);
+          renderedFull.add(n);
+          if (host) paintedHeight = host.scrollHeight;
+          notifyFirst?.();
+        });
+      } catch {
+        if (gen === paintGen) failedFull.add(n);
+      }
+    }
+
+    function notifyTextReady() {
+      const root = host;
+      const first = pageEls[0];
+      if (!root || !first?.isConnected) {
+        textReadyPending = true;
+        return;
+      }
+      if (textNotifiedGen === paintGen) return;
+      textNotifiedGen = paintGen;
+      textReadyPending = false;
+      onReady?.(root);
+    }
+
+    function urgentBitmap(): boolean {
       for (const n of wantFull) {
         if (!renderedFull.has(n) && !failedFull.has(n)) return true;
-      }
-      return Boolean(pdfDoc && textCursor <= pdfDoc.numPages);
-    }
-
-    async function pumpOnce(gen: number): Promise<boolean> {
-      if (gen !== paintGen || !pdfDoc) return false;
-      const nextFull = [...wantFull].find((n) => !renderedFull.has(n) && !failedFull.has(n));
-      if (nextFull) {
-        await drawPage(nextFull, 'full', gen);
-        return gen === paintGen;
-      }
-      if (textCursor <= pdfDoc.numPages) {
-        const n = textCursor;
-        textCursor += 1;
-        if (!renderedText.has(n) && !failedText.has(n)) await drawPage(n, 'text', gen);
-        return gen === paintGen;
       }
       return false;
     }
 
-    function kickPump() {
-      if (pumping) {
-        pumpAgain = true;
-        return;
+    async function indexAllText(gen: number) {
+      const total = pdfDoc?.numPages ?? 0;
+      for (let n = 1; n <= total; n++) {
+        if (gen !== paintGen || cancelled) return;
+        while (gen === paintGen && !cancelled && urgentBitmap()) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 16));
+        }
+        if (gen !== paintGen || cancelled) return;
+        await ensureText(n, gen);
       }
-      pumping = true;
-      void runPump();
+      if (gen !== paintGen || cancelled) return;
+      notifyTextReady();
     }
 
-    async function runPump() {
+    let bitmapPumping = false;
+    let bitmapAgain = false;
+
+    function nextBitmap(): number | null {
+      const total = pageEls.length;
+      if (!total) return null;
+      if (!layoutCommitted) {
+        for (const n of wantFull) {
+          if (!renderedFull.has(n) && !failedFull.has(n)) return n;
+        }
+        return null;
+      }
+      const [first, last] = visibleRange();
+      const ordered: number[] = [];
+      for (let n = first; n <= last; n++) ordered.push(n);
+      const ahead = Math.min(total, last + 4);
+      for (let n = last + 1; n <= ahead; n++) ordered.push(n);
+      for (let n = first - 1; n >= Math.max(1, first - 1); n--) ordered.push(n);
+      for (const n of ordered) {
+        if (wantFull.has(n) && !renderedFull.has(n) && !failedFull.has(n)) return n;
+      }
+      for (const n of wantFull) {
+        if (!renderedFull.has(n) && !failedFull.has(n)) return n;
+      }
+      return null;
+    }
+
+    function kickBitmap() {
+      if (bitmapPumping) {
+        bitmapAgain = true;
+        return;
+      }
+      bitmapPumping = true;
+      void runBitmap();
+    }
+
+    async function runBitmap() {
       const gen = paintGen;
       try {
-        while (!cancelled && gen === paintGen) {
-          const more = await pumpOnce(gen);
-          if (!more || !hasPending()) break;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-        }
-        if (!cancelled && gen === paintGen && pdfDoc && textCursor > pdfDoc.numPages && textDoneGen !== gen) {
-          textDoneGen = gen;
-          const root = host;
-          const first = pageEls[0];
-          if (root && first?.isConnected) onReady?.(root);
+        while (gen === paintGen && !cancelled) {
+          const next = nextBitmap();
+          if (!next) break;
+          await ensureBitmap(next, gen);
         }
       } finally {
-        pumping = false;
-        if (!cancelled && gen === paintGen && (pumpAgain || hasPending())) {
-          pumpAgain = false;
-          kickPump();
+        bitmapPumping = false;
+        if (!cancelled && gen === paintGen && (bitmapAgain || nextBitmap())) {
+          bitmapAgain = false;
+          kickBitmap();
         }
+      }
+    }
+
+    function dropBitmap(n: number) {
+      bitmapTasks.get(n)?.cancel?.();
+      const el = pageEls[n - 1];
+      el?.querySelector(':scope > canvas')?.remove();
+      el?.querySelector(':scope > img')?.remove();
+      const url = blobByPage.get(n);
+      if (url) URL.revokeObjectURL(url);
+      blobByPage.delete(n);
+      renderedFull.delete(n);
+    }
+
+    function evictBitmaps(first: number, last: number) {
+      const keepFrom = first - 2;
+      const keepTo = last + 6;
+      const center = (first + last) / 2;
+      const extras = [...renderedFull].filter((n) => n < keepFrom || n > keepTo);
+      extras.sort((p, q) => Math.abs(q - center) - Math.abs(p - center));
+      let over = renderedFull.size - 12;
+      for (const n of extras) {
+        if (over <= 0) break;
+        dropBitmap(n);
+        over -= 1;
       }
     }
 
     function syncWindow() {
       if (!layoutCommitted || !pdfDoc || pageEls.length === 0 || Math.abs(liveFit - 1) > 0.002) return;
-      const [start, end] = visibleRange();
-      const keep = new Set<number>();
-      for (let n = start; n <= end; n++) keep.add(n);
-      releaseFar(keep);
+      const [first, last] = visibleRange();
+      const start = Math.max(1, first - 1);
+      const end = Math.min(pageEls.length, last + 4);
+      const want = new Set<number>();
+      for (let n = start; n <= end; n++) want.add(n);
+      for (const n of [...wantFull]) {
+        if (!want.has(n)) bitmapTasks.get(n)?.cancel?.();
+      }
       wantFull.clear();
-      for (const n of keep) {
+      for (const n of want) {
         if (!renderedFull.has(n) && !failedFull.has(n)) wantFull.add(n);
       }
-      kickPump();
+      evictBitmaps(first, last);
+      for (let n = first; n <= last; n++) void ensureText(n, paintGen);
+      kickBitmap();
     }
 
     function makeShells(scale: number, cssW: number, cssH: number, count: number): HTMLDivElement[] {
@@ -437,8 +509,10 @@
       failedFull.clear();
       failedText.clear();
       wantFull.clear();
-      textCursor = 1;
-      textDoneGen = -1;
+      textReadyPending = false;
+      textNotifiedGen = -1;
+      pageChain.clear();
+      bitmapTasks.clear();
       pageTops = [];
     }
 
@@ -485,7 +559,8 @@
         const timer = window.setTimeout(done, 20000);
         if (pdf.numPages === 0) done();
       });
-      kickPump();
+      void indexAllText(gen);
+      kickBitmap();
       await firstReady;
       if (cancelled || gen !== paintGen || loadedUrl !== activeUrl) {
         if (gen === paintGen) {
@@ -520,6 +595,7 @@
       syncWindow();
       onReady?.(root);
       onSettled?.(loadedUrl);
+      if (textReadyPending) notifyTextReady();
     }
 
     function enqueuePaint(url: string): Promise<void> {
@@ -690,12 +766,20 @@
 
   function onPdfContextMenu(event: MouseEvent) {
     const text = selectedTextIn(host) || wordAtPoint(document, event.clientX, event.clientY);
-    const page = event.target instanceof Element ? event.target.closest('.pdf-page') : null;
+    const pageEl = event.target instanceof Element ? event.target.closest('.pdf-page') : null;
     const img =
       event.target instanceof HTMLImageElement
         ? event.target
-        : (page?.querySelector('img') ?? null);
-    if (!text && !img) return;
+        : pageEl?.querySelector('img') instanceof HTMLImageElement
+          ? (pageEl.querySelector('img') as HTMLImageElement)
+          : null;
+    const canvas =
+      event.target instanceof HTMLCanvasElement
+        ? event.target
+        : pageEl?.querySelector('canvas') instanceof HTMLCanvasElement
+          ? (pageEl.querySelector('canvas') as HTMLCanvasElement)
+          : null;
+    if (!text && !img && !canvas) return;
     event.preventDefault();
     event.stopPropagation();
     copyMenu = {
@@ -703,6 +787,7 @@
       y: event.clientY,
       text,
       image: text ? null : img,
+      canvas: text || img ? null : canvas,
     };
   }
 
@@ -712,6 +797,10 @@
     try {
       if (menu.text) await copyToClipboard(menu.text);
       else if (menu.image) await copyImageToClipboard(menu.image);
+      else if (menu.canvas) {
+        const blob = await new Promise<Blob | null>((resolve) => menu.canvas?.toBlob(resolve, 'image/png'));
+        if (blob) await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      }
     } catch {
       if (menu.text) await copyToClipboard(menu.text);
     }
