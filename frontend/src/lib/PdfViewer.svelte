@@ -3,6 +3,9 @@
   import CopyPopup from './CopyPopup.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './wordAtPoint';
   import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
+  import type { PDFDocumentProxy } from 'pdfjs-dist';
+  import { indexMarkY } from './sideIndex';
+  import { buildToc, destTop, topFraction, readingKeyFromPages, type OutlineNode, type TocRow } from './pdfOutline';
 
   const TEXT_LAYER = 1;
   const ANNOTATIONS = 1;
@@ -35,7 +38,13 @@
   } = $props();
 
   let frame = $state<HTMLDivElement | null>(null);
+  let scroller = $state<HTMLDivElement | null>(null);
   let host = $state<HTMLDivElement | null>(null);
+  let tocEl = $state<HTMLElement | null>(null);
+  let tocBody = $state<HTMLElement | null>(null);
+  let toc = $state<TocRow[]>([]);
+  let lineTop = $state(0);
+  let showTocLine = $state(false);
   let error = $state<string | null>(null);
   let loading = $state(true);
   let viewerReady = $state(false);
@@ -49,6 +58,70 @@
   } | null>(null);
 
   let loadUrl: (url: string) => Promise<void> = async () => {};
+  let gotoDest: ((dest: string | unknown[]) => void) | null = null;
+  let tocItems: TocRow[] = [];
+
+  function setToc(items: TocRow[]) {
+    tocItems = items;
+    toc = items;
+    if (!items.length) showTocLine = false;
+  }
+
+  function placeTocLine() {
+    const pane = tocEl;
+    const body = tocBody;
+    const box = scroller;
+    const root = host;
+    if (!pane || !body || !box || !root || tocItems.length === 0) {
+      showTocLine = false;
+      return;
+    }
+    const boxRect = box.getBoundingClientRect();
+    const pages: { pageNumber: number; top: number; bottom: number }[] = [];
+    for (const node of root.querySelectorAll('.page')) {
+      if (!(node instanceof HTMLElement)) continue;
+      const pageNumber = Number(node.dataset.pageNumber);
+      if (!pageNumber) continue;
+      const rect = node.getBoundingClientRect();
+      const top = rect.top - boxRect.top + box.scrollTop;
+      pages.push({ pageNumber, top, bottom: top + Math.max(rect.height, 1) });
+    }
+    const key = readingKeyFromPages(box.scrollTop + box.clientHeight / 2, pages);
+    if (key === null) {
+      showTocLine = false;
+      return;
+    }
+    const bodyRect = body.getBoundingClientRect();
+    const marks = [];
+    for (const item of tocItems) {
+      if (item.key === null) continue;
+      const row = body.querySelector(`[data-toc-id="${item.id}"]`);
+      if (!(row instanceof HTMLElement)) continue;
+      const rect = row.getBoundingClientRect();
+      marks.push({
+        content: item.key,
+        index: rect.top - bodyRect.top + rect.height / 2,
+      });
+    }
+    const y = indexMarkY(marks, key);
+    if (y === null) {
+      showTocLine = false;
+      return;
+    }
+    lineTop = y;
+    showTocLine = true;
+  }
+
+  function syncToc() {
+    placeTocLine();
+    if (!tocEl || !showTocLine) return;
+    tocEl.scrollTo({ top: Math.max(0, lineTop - tocEl.clientHeight / 2), behavior: 'smooth' });
+  }
+
+  function openToc(item: TocRow) {
+    if (!item.dest) return;
+    gotoDest?.(item.dest);
+  }
 
   onMount(() => {
     let cancelled = false;
@@ -63,7 +136,7 @@
 
     let pdfjsMod: typeof import('pdfjs-dist') | null = null;
     let pdfWorker: { destroy?: () => void } | null = null;
-    let pdfDoc: { cleanup?: () => Promise<void> | void; numPages: number } | null = null;
+    let pdfDoc: PDFDocumentProxy | null = null;
     let loadingTask: { destroy: () => Promise<void> } | null = null;
     let pdfViewer: PDFViewer | null = null;
     let eventBus: EventBus | null = null;
@@ -151,13 +224,13 @@
       const worker = pdfjs.PDFWorker.create({ port });
       pdfjsMod = pdfjs;
       pdfWorker = worker;
-      if (!frame || !host) return pdfjs;
+      if (!frame || !host || !scroller) return pdfjs;
       const bus = new viewer.EventBus();
       const links = new viewer.PDFLinkService({ eventBus: bus });
       links.externalLinkEnabled = false;
       const finder = makeFinder(viewer.PDFFindController, links, bus);
       const view = new viewer.PDFViewer({
-        container: frame,
+        container: scroller,
         viewer: host,
         eventBus: bus,
         linkService: links,
@@ -180,12 +253,17 @@
         if (!pdfViewer) return;
         if (userHasZoomed) pdfViewer.currentScale = userScale;
         else pdfViewer.currentScaleValue = 'page-fit';
+        placeTocLine();
       });
+      bus.on('scalechanging', () => placeTocLine());
       FindStatePending = viewer.FindState.PENDING;
       eventBus = bus;
       linkService = links;
       findController = finder;
       pdfViewer = view;
+      gotoDest = (dest) => {
+        void links.goToDestination(dest);
+      };
       return pdfjs;
     }
 
@@ -210,6 +288,76 @@
       }
     }
 
+    async function loadOutline(pdf: PDFDocumentProxy, gen: number, url: string) {
+      try {
+        const outline = await pdf.getOutline?.();
+        if (cancelled || gen !== loadGen || url !== activeUrl) return;
+        if (!outline?.length) {
+          setToc([]);
+          return;
+        }
+        let labels: string[] | null = null;
+        try {
+          labels = (await pdf.getPageLabels?.()) ?? null;
+        } catch {
+          labels = null;
+        }
+        if (cancelled || gen !== loadGen || url !== activeUrl) return;
+        const views = new Map<number, number[]>();
+        const rows = await buildToc(
+          outline as OutlineNode[],
+          async (dest) => {
+            if (!dest || cancelled || gen !== loadGen) return null;
+            let explicit: unknown[] | null = Array.isArray(dest) ? dest : null;
+            if (typeof dest === 'string') {
+              try {
+                explicit = (await pdf.getDestination?.(dest)) ?? null;
+              } catch {
+                return null;
+              }
+            }
+            if (!explicit?.length || cancelled || gen !== loadGen) return null;
+            const destRef = explicit[0];
+            let pageIndex = -1;
+            if (destRef && typeof destRef === 'object') {
+              try {
+                pageIndex = await pdf.getPageIndex(destRef as { num: number; gen: number });
+              } catch {
+                return null;
+              }
+            } else if (typeof destRef === 'number' && Number.isInteger(destRef)) {
+              pageIndex = destRef;
+            } else {
+              return null;
+            }
+            if (pageIndex < 0) return null;
+            let fraction = 0;
+            const top = destTop(explicit);
+            if (top !== null && pdf.getPage) {
+              try {
+                let viewBox = views.get(pageIndex);
+                if (!viewBox) {
+                  viewBox = (await pdf.getPage(pageIndex + 1)).view;
+                  views.set(pageIndex, viewBox);
+                }
+                fraction = topFraction(viewBox, top);
+              } catch {
+                fraction = 0;
+              }
+            }
+            return { page: pageIndex + 1, fraction };
+          },
+          (page) => labels?.[page - 1] || String(page),
+        );
+        if (cancelled || gen !== loadGen || url !== activeUrl) return;
+        setToc(rows);
+        if (!userHasZoomed && pdfViewer) pdfViewer.currentScaleValue = 'page-fit';
+        requestAnimationFrame(() => placeTocLine());
+      } catch {
+        if (!cancelled && gen === loadGen) setToc([]);
+      }
+    }
+
     loadUrl = async (url: string) => {
       activeUrl = url;
       const gen = ++loadGen;
@@ -218,6 +366,7 @@
       findReady = false;
       activeLayer = null;
       findLayer = null;
+      setToc([]);
       try {
         const pdfjs = await ensureEngine();
         if (cancelled || gen !== loadGen || !pdfViewer || !linkService) return;
@@ -243,6 +392,7 @@
         onPageProgress?.(0, pdf.numPages, url);
         linkService.setDocument(pdf);
         pdfViewer.setDocument(pdf);
+        void loadOutline(pdf, gen, url);
         const ready = pdfViewer.onePageRendered;
         if (ready) {
           void ready.then(() => {
@@ -271,6 +421,7 @@
     };
 
     function onWheel(event: WheelEvent) {
+      if (tocEl && event.target instanceof Node && tocEl.contains(event.target)) return;
       if ((!event.ctrlKey && !event.metaKey) || !pdfViewer?.pdfDocument) return;
       event.preventDefault();
       let dy = event.deltaY;
@@ -299,14 +450,18 @@
       ro.observe(frame);
       frame.addEventListener('wheel', onWheel, { passive: false });
     }
+    const onPdfScroll = () => placeTocLine();
+    scroller?.addEventListener('scroll', onPdfScroll, { passive: true });
     viewerReady = true;
 
     return () => {
       cancelled = true;
       loadGen += 1;
+      gotoDest = null;
       window.clearTimeout(resizeTimer);
       ro.disconnect();
       frame?.removeEventListener('wheel', onWheel);
+      scroller?.removeEventListener('scroll', onPdfScroll);
       try {
         pdfViewer?.cleanup();
       } catch {
@@ -434,7 +589,36 @@
   role="document"
   oncontextmenu={onPdfContextMenu}
 >
-  <div class="pdf-pages pdfViewer" bind:this={host}></div>
+  {#if toc.length}
+    <aside class="pdf-toc" bind:this={tocEl} aria-label="Contents">
+      <div class="pdf-toc-body" bind:this={tocBody}>
+        <div class="pdf-toc-line" class:on={showTocLine} style:top="{lineTop}px"></div>
+        <button
+          class="pdf-toc-sync"
+          type="button"
+          title="Scroll the contents to the place shown in the PDF"
+          onclick={syncToc}
+        >Index</button>
+        {#each toc as item (item.id)}
+          <button
+            class="pdf-toc-item"
+            type="button"
+            data-toc-id={item.id}
+            style:padding-left="{0.45 + item.depth * 0.75}rem"
+            title={item.page ? `${item.title} — page ${item.label}` : item.title}
+            disabled={!item.dest}
+            onclick={() => openToc(item)}
+          >
+            <span class="pdf-toc-title">{item.title}</span>
+            {#if item.label}<span class="pdf-toc-page">{item.label}</span>{/if}
+          </button>
+        {/each}
+      </div>
+    </aside>
+  {/if}
+  <div class="pdf-scroll" bind:this={scroller}>
+    <div class="pdf-pages pdfViewer" bind:this={host}></div>
+  </div>
   {#if loading}
     <div class="pdf-loading" role="status" aria-label="Loading PDF">
       <span class="pdf-loading-spinner"></span>
