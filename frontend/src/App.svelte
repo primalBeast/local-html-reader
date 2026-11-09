@@ -10,6 +10,7 @@
   import { applyFinds, reveal } from './lib/pageFind';
   import HelpDialog from './lib/HelpDialog.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
+  import { hashForSameFile, revealHash } from './lib/inPageLink';
 
   let roots = $state<Root[]>([]);
   let projects = $state<Project[]>([]);
@@ -886,6 +887,7 @@
     const url = viewUrl(doc.root_id, doc.rel);
     const key = docKey(doc);
     delete el.dataset.readyKey;
+    el.dataset.pageUrl = new URL(url, window.location.href).href;
     try {
       const res = await fetch(url, { headers: { Accept: 'text/html,*/*' } });
       if (openingKey !== key) return;
@@ -1165,7 +1167,32 @@
       };
     };
     doc.addEventListener('contextmenu', handler);
-    iframeCopyCleanup = () => doc.removeEventListener('contextmenu', handler);
+    const onLink = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (event.defaultPrevented) return;
+      const view = doc.defaultView;
+      if (!view) return;
+      const node = event.target;
+      const el =
+        node instanceof view.Element ? node : node instanceof view.Node ? node.parentElement : null;
+      const anchor = el?.closest('a[href], area[href]');
+      if (!anchor) return;
+      const where = (anchor.getAttribute('target') || '').toLowerCase();
+      if (where === '_blank' || where === '_parent' || where === '_top') return;
+      const pageUrl = frame.dataset.pageUrl || '';
+      const rawHref = anchor.getAttribute('href') || '';
+      const hrefValue = (anchor as HTMLAnchorElement).href;
+      const resolved = typeof hrefValue === 'string' && hrefValue ? hrefValue : rawHref;
+      const hash = hashForSameFile(rawHref, resolved, pageUrl);
+      if (!hash) return;
+      event.preventDefault();
+      revealHash(doc, hash);
+    };
+    doc.addEventListener('click', onLink, true);
+    iframeCopyCleanup = () => {
+      doc.removeEventListener('contextmenu', handler);
+      doc.removeEventListener('click', onLink, true);
+    };
   }
 
   async function copyHtmlSelection() {
