@@ -84,16 +84,78 @@ function chooseIndex(doc: Document, pairs: Pair[]): HTMLElement | null {
   return tight[0] ?? null;
 }
 
-function scrollBox(start: Element, doc: Document): HTMLElement | Window {
+function canScroll(el: HTMLElement, view: Window): boolean {
+  const oy = view.getComputedStyle(el).overflowY;
+  if (oy !== 'auto' && oy !== 'scroll' && oy !== 'overlay' && oy !== 'hidden') return false;
+  return el.scrollHeight > el.clientHeight + 24 && el.clientHeight > 80;
+}
+
+function scrollerFrom(start: Element | null, doc: Document): HTMLElement | Window {
   const view = doc.defaultView!;
-  let node = start.parentElement;
-  while (node && node !== doc.documentElement) {
-    const style = view.getComputedStyle(node);
-    const overflow = `${style.overflowY} ${style.overflow}`;
-    if (/(auto|scroll|overlay)/.test(overflow) && node.scrollHeight > node.clientHeight + 16) return node;
+  let node: Element | null = start;
+  while (node) {
+    if (node instanceof view.HTMLElement && canScroll(node, view)) return node;
     node = node.parentElement;
   }
   return view;
+}
+
+function mainScroller(doc: Document, index: HTMLElement, pairs: Pair[]): HTMLElement | Window {
+  const view = doc.defaultView!;
+  const counts = new Map<HTMLElement | Window, number>();
+  for (const pair of pairs) {
+    if (index.contains(pair.target)) continue;
+    const scroller = scrollerFrom(pair.target, doc);
+    counts.set(scroller, (counts.get(scroller) || 0) + 1);
+  }
+  let best: HTMLElement | Window = view;
+  let bestN = 0;
+  for (const [scroller, n] of counts) {
+    if (n > bestN) {
+      best = scroller;
+      bestN = n;
+    }
+  }
+  const viewport = view.innerHeight || doc.documentElement.clientHeight || 1;
+  if (best instanceof view.HTMLElement && best.clientHeight < viewport * 0.55) {
+    let node = best.parentElement;
+    while (node) {
+      if (node instanceof view.HTMLElement && canScroll(node, view) && node.clientHeight >= viewport * 0.55) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return view;
+  }
+  return best;
+}
+
+function bestIndexScroller(index: HTMLElement, doc: Document, main: HTMLElement | Window): HTMLElement | null {
+  const view = doc.defaultView!;
+  const skip = (el: HTMLElement) =>
+    el === main || el === doc.body || el === doc.documentElement;
+  let best: HTMLElement | null = null;
+  let bestSpan = 0;
+  const consider = (el: HTMLElement) => {
+    if (skip(el) || !canScroll(el, view)) return;
+    const span = el.scrollHeight - el.clientHeight;
+    if (span > bestSpan) {
+      best = el;
+      bestSpan = span;
+    }
+  };
+  consider(index);
+  for (const node of index.querySelectorAll('*')) {
+    if (node instanceof view.HTMLElement) consider(node);
+  }
+  if (best) return best;
+  let node = index.parentElement;
+  while (node) {
+    consider(node);
+    if (best) return best;
+    node = node.parentElement;
+  }
+  return null;
 }
 
 function contentY(el: Element, scroller: HTMLElement | Window): number {
@@ -114,8 +176,12 @@ function yInIndex(el: Element, index: HTMLElement): number {
   return box.top - host.top + index.scrollTop + box.height / 2;
 }
 
-/** Draw the midpoint line and the button that scrolls the index to it. */
-export function attachSideIndex(doc: Document, pageUrl: string): () => void {
+/** Draw the midpoint line. Calls onSync with a function that scrolls the index to that line. */
+export function attachSideIndex(
+  doc: Document,
+  pageUrl: string,
+  onSync?: (sync: (() => void) | null) => void,
+): () => void {
   const view = doc.defaultView;
   if (!view) return () => {};
   let disposed = false;
@@ -128,10 +194,11 @@ export function attachSideIndex(doc: Document, pageUrl: string): () => void {
       (pair) => index.contains(pair.link) && !index.contains(pair.target),
     );
     if (pairs.length < 4) return;
-    const main = scrollBox(pairs[0].target, doc);
-    const indexScroll = scrollBox(pairs[0].link, doc);
-    const madeRelative = view.getComputedStyle(index).position === 'static';
-    if (madeRelative) index.style.position = 'relative';
+    const mainAtMount = mainScroller(doc, index, pairs);
+    const scroller = bestIndexScroller(index, doc, mainAtMount);
+    const host = scroller && scroller.contains(pairs[0].link) ? scroller : index;
+    const madeRelative = view.getComputedStyle(host).position === 'static';
+    if (madeRelative) host.style.position = 'relative';
 
     const line = doc.createElement('div');
     line.dataset.lhrIndexUi = 'line';
@@ -145,58 +212,21 @@ export function attachSideIndex(doc: Document, pageUrl: string): () => void {
       'padding:0',
       'border:0',
       'background:#1a73e8',
-      'box-shadow:0 0 0 1px rgba(26,115,232,.35)',
+      'box-shadow:0 0 0 1px rgba(26,115,232,.45)',
       'pointer-events:none',
       'z-index:2147483646',
       'top:0',
     ].join(';');
-    index.appendChild(line);
-
-    const button = doc.createElement('button');
-    button.dataset.lhrIndexUi = 'button';
-    button.type = 'button';
-    button.textContent = 'Index';
-    button.title = 'Scroll the index to the place shown in the document';
-    button.style.cssText = [
-      'position:fixed',
-      'z-index:2147483647',
-      'background:#1a73e8',
-      'color:#fff',
-      'border:0',
-      'border-radius:4px',
-      'font:600 11px/1 "Segoe UI",system-ui,sans-serif',
-      'padding:5px 7px',
-      'cursor:pointer',
-      'box-shadow:0 1px 4px rgba(0,0,0,.28)',
-    ].join(';');
-    doc.body.appendChild(button);
-
-    const placeButton = () => {
-      const independent = indexScroll instanceof HTMLElement && indexScroll !== main;
-      if (!independent) {
-        button.style.display = 'none';
-        return;
-      }
-      const rect = indexScroll.getBoundingClientRect();
-      if (rect.width < 2 || rect.bottom < 8 || rect.top > view.innerHeight - 8) {
-        button.style.display = 'none';
-        return;
-      }
-      button.style.display = 'block';
-      const top = Math.min(Math.max(rect.top, 0) + 8, Math.max(rect.top, rect.bottom - 28));
-      button.style.top = `${top}px`;
-      button.style.left = `${Math.min(rect.right, view.innerWidth) - 8}px`;
-      button.style.transform = 'translateX(-100%)';
-      button.style.width = 'max-content';
-    };
+    host.appendChild(line);
 
     const placeLine = () => {
+      const main = mainScroller(doc, index, pairs);
       const marks: IndexMark[] = [];
       for (const pair of pairs) {
         if (!pair.link.isConnected || !pair.target.isConnected) continue;
         marks.push({
           content: contentY(pair.target, main),
-          index: yInIndex(pair.link, index),
+          index: yInIndex(pair.link, host),
         });
       }
       const y = indexMarkY(marks, midpointY(main));
@@ -208,6 +238,16 @@ export function attachSideIndex(doc: Document, pageUrl: string): () => void {
       line.style.top = `${y}px`;
     };
 
+    const sync = () => {
+      placeLine();
+      const box = scroller ?? bestIndexScroller(index, doc, mainScroller(doc, index, pairs));
+      if (!box) return;
+      const lineRect = line.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+      const y = lineRect.top - boxRect.top + box.scrollTop;
+      box.scrollTo({ top: Math.max(0, y - box.clientHeight / 2), behavior: 'smooth' });
+    };
+
     let frame = 0;
     const schedule = () => {
       if (disposed || frame) return;
@@ -215,39 +255,25 @@ export function attachSideIndex(doc: Document, pageUrl: string): () => void {
         frame = 0;
         if (disposed) return;
         placeLine();
-        placeButton();
       });
     };
 
-    const onButton = () => {
-      if (!(indexScroll instanceof HTMLElement) || indexScroll === main) return;
-      placeLine();
-      const lineRect = line.getBoundingClientRect();
-      const host = indexScroll.getBoundingClientRect();
-      const y = lineRect.top - host.top + indexScroll.scrollTop;
-      const top = y - indexScroll.clientHeight / 2;
-      indexScroll.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-    };
-
-    button.addEventListener('click', onButton);
-    const boxes: (HTMLElement | Window)[] = [main, indexScroll, view];
-    const seen = new Set<HTMLElement | Window>();
-    for (const box of boxes) {
-      if (seen.has(box)) continue;
-      seen.add(box);
-      box.addEventListener('scroll', schedule, { passive: true });
-    }
+    doc.addEventListener('scroll', schedule, { capture: true, passive: true });
+    doc.addEventListener('wheel', schedule, { capture: true, passive: true });
+    view.addEventListener('scroll', schedule, { capture: true, passive: true });
     view.addEventListener('resize', schedule);
     schedule();
+    onSync?.(sync);
 
     stop = () => {
       if (frame) view.cancelAnimationFrame(frame);
-      button.removeEventListener('click', onButton);
-      for (const box of seen) box.removeEventListener('scroll', schedule);
+      doc.removeEventListener('scroll', schedule, { capture: true });
+      doc.removeEventListener('wheel', schedule, { capture: true });
+      view.removeEventListener('scroll', schedule, { capture: true });
       view.removeEventListener('resize', schedule);
       line.remove();
-      button.remove();
-      if (madeRelative) index.style.position = '';
+      if (madeRelative) host.style.position = '';
+      onSync?.(null);
     };
   };
 

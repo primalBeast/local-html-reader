@@ -143,6 +143,7 @@
   let settingFolder = $state(false);
 
   let iframeEl = $state<HTMLIFrameElement | null>(null);
+  let syncIndex = $state<(() => void) | null>(null);
   let pdfRootEl = $state<HTMLElement | null>(null);
   let heldHtml = $state<DocumentHit | null>(null);
   let htmlCopyMenu = $state<{ x: number; y: number; text: string; image: HTMLImageElement | null } | null>(
@@ -1190,11 +1191,14 @@
       revealHash(doc, hash);
     };
     doc.addEventListener('click', onLink, true);
-    const detachIndex = attachSideIndex(doc, frame.dataset.pageUrl || '');
+    const detachIndex = attachSideIndex(doc, frame.dataset.pageUrl || '', (sync) => {
+      syncIndex = sync;
+    });
     iframeCopyCleanup = () => {
       doc.removeEventListener('contextmenu', handler);
       doc.removeEventListener('click', onLink, true);
       detachIndex();
+      syncIndex = null;
     };
   }
 
@@ -1736,14 +1740,24 @@
       {#if selected}
         <div class="viewer-bar">
           <div class="doc-heading">
-            <code
-              class="doc-path"
-              title={windowsFullPath(selected.root_path, selected.rel)}
-              oncontextmenu={(e) => {
-                if (!selected) return;
-                openPathMenu(e, selected.root_path, selected.rel);
-              }}
-            >{windowsRelPath(selected.rel)}</code>
+            <div class="doc-title-row">
+              <code
+                class="doc-path"
+                title={windowsFullPath(selected.root_path, selected.rel)}
+                oncontextmenu={(e) => {
+                  if (!selected) return;
+                  openPathMenu(e, selected.root_path, selected.rel);
+                }}
+              >{windowsRelPath(selected.rel)}</code>
+              {#if syncIndex && !isPdfHit(selected)}
+                <button
+                  class="index-sync"
+                  type="button"
+                  title="Scroll the index to the place shown in the document"
+                  onclick={() => syncIndex?.()}
+                >Index</button>
+              {/if}
+            </div>
             {#if pageSummary}
               <div class="doc-pages">{pageSummary}</div>
             {/if}

@@ -917,6 +917,34 @@ input[type="text"]:focus {
   max-width: 100%;
 }
 
+.doc-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.doc-title-row .doc-path {
+  flex: 1 1 auto;
+}
+
+.index-sync {
+  flex: 0 0 auto;
+  background: #1a73e8;
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.28rem 0.5rem;
+  cursor: pointer;
+}
+
+.index-sync:hover {
+  background: #3b86ea;
+}
+
 .doc-path {
   font-family: var(--mono);
   color: var(--text);
