@@ -1053,8 +1053,6 @@ iframe.doc-frame.viewer-under {
   position: absolute;
   inset: 0;
   z-index: 1;
-  display: flex;
-  flex-direction: row;
   overflow: hidden;
   background: #090b10;
   --page-margin: 8px auto;
@@ -1064,18 +1062,26 @@ iframe.doc-frame.viewer-under {
 }
 
 .pdf-scroll {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 
+.pdf-frame.pdf-has-toc .pdf-scroll {
+  left: 16.5rem;
+}
+
 .pdf-toc {
-  flex: 0 0 16.5rem;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 2;
   width: 16.5rem;
-  min-height: 0;
   overflow: auto;
   background: #10141c;
   border-right: 1px solid var(--border);

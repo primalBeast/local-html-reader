@@ -583,6 +583,7 @@
 <div
   class="pdf-frame doc-frame"
   class:pdf-frame-overlay={overlay}
+  class:pdf-has-toc={toc.length > 0}
   class:find-list={findLayer === 'list'}
   class:find-page={findLayer === 'page'}
   bind:this={frame}
