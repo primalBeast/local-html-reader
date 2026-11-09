@@ -143,6 +143,7 @@
   let settingFolder = $state(false);
 
   let iframeEl = $state<HTMLIFrameElement | null>(null);
+  let indexLineEl = $state<HTMLDivElement | null>(null);
   let syncIndex = $state<(() => void) | null>(null);
   let pdfRootEl = $state<HTMLElement | null>(null);
   let heldHtml = $state<DocumentHit | null>(null);
@@ -1191,14 +1192,31 @@
       revealHash(doc, hash);
     };
     doc.addEventListener('click', onLink, true);
-    const detachIndex = attachSideIndex(doc, frame.dataset.pageUrl || '', (sync) => {
-      syncIndex = sync;
-    });
+    const detachIndex = attachSideIndex(
+      doc,
+      frame.dataset.pageUrl || '',
+      (sync) => {
+        syncIndex = sync;
+      },
+      (box) => {
+        const el = indexLineEl;
+        if (!el) return;
+        if (!box || (selected && isPdfHit(selected))) {
+          el.style.display = 'none';
+          return;
+        }
+        el.style.display = 'block';
+        el.style.top = `${box.top}px`;
+        el.style.left = `${box.left}px`;
+        el.style.width = `${box.width}px`;
+      },
+    );
     iframeCopyCleanup = () => {
       doc.removeEventListener('contextmenu', handler);
       doc.removeEventListener('click', onLink, true);
       detachIndex();
       syncIndex = null;
+      if (indexLineEl) indexLineEl.style.display = 'none';
     };
   }
 
@@ -1864,6 +1882,7 @@
           </div>
         </div>
         <div class="viewer-stage">
+          <div class="index-line" bind:this={indexLineEl}></div>
           {#if selected && (!isPdfHit(selected) || heldHtml)}
             {#key `${(heldHtml ?? selected).root_id}:${(heldHtml ?? selected).rel}`}
               <iframe

@@ -84,103 +84,20 @@ function chooseIndex(doc: Document, pairs: Pair[]): HTMLElement | null {
   return tight[0] ?? null;
 }
 
-function canScroll(el: HTMLElement, view: Window): boolean {
-  const oy = view.getComputedStyle(el).overflowY;
-  if (oy !== 'auto' && oy !== 'scroll' && oy !== 'overlay' && oy !== 'hidden') return false;
-  return el.scrollHeight > el.clientHeight + 24 && el.clientHeight > 80;
-}
-
-function scrollerFrom(start: Element | null, doc: Document): HTMLElement | Window {
-  const view = doc.defaultView!;
-  let node: Element | null = start;
-  while (node) {
-    if (node instanceof view.HTMLElement && canScroll(node, view)) return node;
-    node = node.parentElement;
-  }
-  return view;
-}
-
-function mainScroller(doc: Document, index: HTMLElement, pairs: Pair[]): HTMLElement | Window {
-  const view = doc.defaultView!;
-  const counts = new Map<HTMLElement | Window, number>();
-  for (const pair of pairs) {
-    if (index.contains(pair.target)) continue;
-    const scroller = scrollerFrom(pair.target, doc);
-    counts.set(scroller, (counts.get(scroller) || 0) + 1);
-  }
-  let best: HTMLElement | Window = view;
-  let bestN = 0;
-  for (const [scroller, n] of counts) {
-    if (n > bestN) {
-      best = scroller;
-      bestN = n;
-    }
-  }
-  const viewport = view.innerHeight || doc.documentElement.clientHeight || 1;
-  if (best instanceof view.HTMLElement && best.clientHeight < viewport * 0.55) {
-    let node = best.parentElement;
-    while (node) {
-      if (node instanceof view.HTMLElement && canScroll(node, view) && node.clientHeight >= viewport * 0.55) {
-        return node;
-      }
-      node = node.parentElement;
-    }
-    return view;
-  }
-  return best;
-}
-
-function bestIndexScroller(index: HTMLElement, doc: Document, main: HTMLElement | Window): HTMLElement | null {
-  const view = doc.defaultView!;
-  const skip = (el: HTMLElement) =>
-    el === main || el === doc.body || el === doc.documentElement;
-  let best: HTMLElement | null = null;
-  let bestSpan = 0;
-  const consider = (el: HTMLElement) => {
-    if (skip(el) || !canScroll(el, view)) return;
-    const span = el.scrollHeight - el.clientHeight;
-    if (span > bestSpan) {
-      best = el;
-      bestSpan = span;
-    }
-  };
-  consider(index);
-  for (const node of index.querySelectorAll('*')) {
-    if (node instanceof view.HTMLElement) consider(node);
-  }
-  if (best) return best;
-  let node = index.parentElement;
-  while (node) {
-    consider(node);
-    if (best) return best;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-function contentY(el: Element, scroller: HTMLElement | Window): number {
+function targetTop(el: Element): number | null {
   const box = el.getBoundingClientRect();
-  if (scroller instanceof Window) return box.top + scroller.scrollY;
-  const host = scroller.getBoundingClientRect();
-  return box.top - host.top + scroller.scrollTop;
+  if (box.width === 0 && box.height === 0 && box.top === 0 && box.left === 0) return null;
+  return box.top;
 }
 
-function midpointY(scroller: HTMLElement | Window): number {
-  if (scroller instanceof Window) return scroller.scrollY + scroller.innerHeight / 2;
-  return scroller.scrollTop + scroller.clientHeight / 2;
-}
-
-function yInIndex(el: Element, index: HTMLElement): number {
-  const host = index.getBoundingClientRect();
-  const box = el.getBoundingClientRect();
-  return box.top - host.top + index.scrollTop + box.height / 2;
-}
+export type IndexLine = { top: number; left: number; width: number };
 
 /** Draw the midpoint line. Calls onSync with a function that scrolls the index to that line. */
 export function attachSideIndex(
   doc: Document,
   pageUrl: string,
   onSync?: (sync: (() => void) | null) => void,
+  onLine?: (line: IndexLine | null) => void,
 ): () => void {
   const view = doc.defaultView;
   if (!view) return () => {};
@@ -194,85 +111,85 @@ export function attachSideIndex(
       (pair) => index.contains(pair.link) && !index.contains(pair.target),
     );
     if (pairs.length < 4) return;
-    const mainAtMount = mainScroller(doc, index, pairs);
-    const scroller = bestIndexScroller(index, doc, mainAtMount);
-    const host = scroller && scroller.contains(pairs[0].link) ? scroller : index;
-    const madeRelative = view.getComputedStyle(host).position === 'static';
-    if (madeRelative) host.style.position = 'relative';
 
-    const line = doc.createElement('div');
-    line.dataset.lhrIndexUi = 'line';
-    line.setAttribute('aria-hidden', 'true');
-    line.style.cssText = [
-      'position:absolute',
-      'left:0',
-      'right:0',
-      'height:3px',
-      'margin:0',
-      'padding:0',
-      'border:0',
-      'background:#1a73e8',
-      'box-shadow:0 0 0 1px rgba(26,115,232,.45)',
-      'pointer-events:none',
-      'z-index:2147483646',
-      'top:0',
-    ].join(';');
-    host.appendChild(line);
+    const marker = doc.createElement('span');
+    marker.dataset.lhrIndexUi = 'marker';
+    marker.hidden = true;
+    doc.body.appendChild(marker);
 
     const placeLine = () => {
-      const main = mainScroller(doc, index, pairs);
+      const mid = (view.innerHeight || doc.documentElement.clientHeight) / 2;
       const marks: IndexMark[] = [];
       for (const pair of pairs) {
         if (!pair.link.isConnected || !pair.target.isConnected) continue;
-        marks.push({
-          content: contentY(pair.target, main),
-          index: yInIndex(pair.link, host),
-        });
+        const content = targetTop(pair.target);
+        const linkBox = pair.link.getBoundingClientRect();
+        if (content === null || (linkBox.width < 1 && linkBox.height < 1)) continue;
+        marks.push({ content, index: linkBox.top + linkBox.height / 2 });
       }
-      const y = indexMarkY(marks, midpointY(main));
-      if (y === null) {
-        line.style.display = 'none';
+      const y = indexMarkY(marks, mid);
+      const pane = index.getBoundingClientRect();
+      if (y === null || pane.width < 2 || pane.bottom < 0 || pane.top > view.innerHeight) {
+        onLine?.(null);
         return;
       }
-      line.style.display = 'block';
-      line.style.top = `${y}px`;
+      onLine?.({ top: y - 1, left: pane.left, width: pane.width });
     };
 
     const sync = () => {
       placeLine();
-      const box = scroller ?? bestIndexScroller(index, doc, mainScroller(doc, index, pairs));
-      if (!box) return;
-      const lineRect = line.getBoundingClientRect();
-      const boxRect = box.getBoundingClientRect();
-      const y = lineRect.top - boxRect.top + box.scrollTop;
-      box.scrollTo({ top: Math.max(0, y - box.clientHeight / 2), behavior: 'smooth' });
+      const mid = (view.innerHeight || doc.documentElement.clientHeight) / 2;
+      const marks: IndexMark[] = [];
+      for (const pair of pairs) {
+        const content = targetTop(pair.target);
+        if (content === null) continue;
+        const linkBox = pair.link.getBoundingClientRect();
+        marks.push({ content, index: linkBox.top + linkBox.height / 2 });
+      }
+      const y = indexMarkY(marks, mid);
+      if (y === null) return;
+      let closest: HTMLAnchorElement | null = null;
+      let bestDist = Infinity;
+      for (const pair of pairs) {
+        const linkBox = pair.link.getBoundingClientRect();
+        const dist = Math.abs(linkBox.top + linkBox.height / 2 - y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          closest = pair.link;
+        }
+      }
+      if (!closest) return;
+      const holdsMain = (el: HTMLElement) =>
+        pairs.some((pair) => !index.contains(pair.target) && el.contains(pair.target));
+      let node: HTMLElement | null = closest.parentElement;
+      while (node && node !== doc.body && node !== doc.documentElement) {
+        if (!holdsMain(node) && node.scrollHeight > node.clientHeight + 16) {
+          const before = node.scrollTop;
+          const linkBox = closest.getBoundingClientRect();
+          const paneBox = node.getBoundingClientRect();
+          const delta = linkBox.top + linkBox.height / 2 - (paneBox.top + paneBox.height / 2);
+          if (Math.abs(delta) > 2) {
+            node.scrollTop = before + delta;
+            if (Math.abs(node.scrollTop - before) > 1) return;
+          }
+        }
+        node = node.parentElement;
+      }
     };
 
     let frame = 0;
-    const schedule = () => {
-      if (disposed || frame) return;
-      frame = view.requestAnimationFrame(() => {
-        frame = 0;
-        if (disposed) return;
-        placeLine();
-      });
+    const watch = () => {
+      if (disposed) return;
+      placeLine();
+      frame = view.requestAnimationFrame(watch);
     };
-
-    doc.addEventListener('scroll', schedule, { capture: true, passive: true });
-    doc.addEventListener('wheel', schedule, { capture: true, passive: true });
-    view.addEventListener('scroll', schedule, { capture: true, passive: true });
-    view.addEventListener('resize', schedule);
-    schedule();
+    frame = view.requestAnimationFrame(watch);
     onSync?.(sync);
 
     stop = () => {
       if (frame) view.cancelAnimationFrame(frame);
-      doc.removeEventListener('scroll', schedule, { capture: true });
-      doc.removeEventListener('wheel', schedule, { capture: true });
-      view.removeEventListener('scroll', schedule, { capture: true });
-      view.removeEventListener('resize', schedule);
-      line.remove();
-      if (madeRelative) host.style.position = '';
+      marker.remove();
+      onLine?.(null);
       onSync?.(null);
     };
   };

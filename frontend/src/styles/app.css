@@ -1023,6 +1023,17 @@ input[type="text"]:focus {
   flex-direction: column;
 }
 
+.index-line {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  height: 3px;
+  margin: 0;
+  background: #1a73e8;
+  box-shadow: 0 0 0 1px rgba(26, 115, 232, 0.45);
+  pointer-events: none;
+}
+
 iframe.doc-frame,
 .pdf-frame {
   flex: 1 1 0;
