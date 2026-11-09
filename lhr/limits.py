@@ -94,7 +94,7 @@ def help_document() -> dict:
                     f"Searched and opened up to {file_mb} MB.",
                     "Every page is shown. Only the pages on screen are drawn, the same way a browser does it.",
                     "Find searches the whole file in the background and jumps to the match. It does not draw every page first.",
-                    "If the PDF has an outline, it is listed to the left of the pages. Click a section to open it. A blue line marks the section at the middle of the page, and Index scrolls the list to that line.",
+                    "If the PDF has an outline, it is listed to the left of the pages. Drag its edge to make the list wider or narrower. Click a section to open it. A blue line marks the section at the middle of the page, and Index scrolls the list to that line.",
                 ],
             },
             {

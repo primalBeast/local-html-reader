@@ -45,6 +45,8 @@
   let toc = $state<TocRow[]>([]);
   let lineTop = $state(0);
   let showTocLine = $state(false);
+  let tocWidth = $state(readTocWidth());
+  let tocDragging = $state(false);
   let error = $state<string | null>(null);
   let loading = $state(true);
   let viewerReady = $state(false);
@@ -121,6 +123,69 @@
   function openToc(item: TocRow) {
     if (!item.dest) return;
     gotoDest?.(item.dest);
+  }
+
+  const TOC_DEFAULT = 264;
+  const TOC_MIN = 140;
+  const TOC_PAGE_MIN = 220;
+  const TOC_STORAGE = 'lhr-pdf-toc-width';
+
+  function readTocWidth(): number {
+    try {
+      const raw = Number(localStorage.getItem(TOC_STORAGE));
+      if (Number.isFinite(raw) && raw >= 140) return raw;
+    } catch {
+      /* ignore */
+    }
+    return 264;
+  }
+
+  function clampToc(raw: number): number {
+    const frameWidth = frame?.clientWidth ?? window.innerWidth;
+    const max = Math.max(TOC_MIN, frameWidth - TOC_PAGE_MIN);
+    return Math.round(Math.min(max, Math.max(TOC_MIN, raw)));
+  }
+
+  function persistToc(width: number) {
+    tocWidth = width;
+    try {
+      localStorage.setItem(TOC_STORAGE, String(width));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function onTocSplitDown(event: PointerEvent) {
+    event.preventDefault();
+    tocDragging = true;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function onTocSplitMove(event: PointerEvent) {
+    if (!tocDragging || !frame) return;
+    tocWidth = clampToc(event.clientX - frame.getBoundingClientRect().left);
+  }
+
+  function onTocSplitUp() {
+    if (!tocDragging) return;
+    tocDragging = false;
+    persistToc(clampToc(tocWidth));
+  }
+
+  function onTocSplitDbl() {
+    persistToc(clampToc(TOC_DEFAULT));
+  }
+
+  function onTocSplitKey(event: KeyboardEvent) {
+    const step = event.shiftKey ? 48 : 16;
+    let next = tocWidth;
+    if (event.key === 'ArrowLeft') next -= step;
+    else if (event.key === 'ArrowRight') next += step;
+    else if (event.key === 'Home') next = TOC_MIN;
+    else if (event.key === 'End') next = (frame?.clientWidth ?? 800) - TOC_PAGE_MIN;
+    else return;
+    event.preventDefault();
+    persistToc(clampToc(next));
   }
 
   onMount(() => {
@@ -450,6 +515,7 @@
       ro.observe(frame);
       frame.addEventListener('wheel', onWheel, { passive: false });
     }
+    if (scroller) ro.observe(scroller);
     const onPdfScroll = () => placeTocLine();
     scroller?.addEventListener('scroll', onPdfScroll, { passive: true });
     viewerReady = true;
@@ -584,6 +650,8 @@
   class="pdf-frame doc-frame"
   class:pdf-frame-overlay={overlay}
   class:pdf-has-toc={toc.length > 0}
+  class:toc-dragging={tocDragging}
+  style:--toc-width="{tocWidth}px"
   class:find-list={findLayer === 'list'}
   class:find-page={findLayer === 'page'}
   bind:this={frame}
@@ -616,6 +684,19 @@
         {/each}
       </div>
     </aside>
+    <button
+      class="pdf-toc-split"
+      class:active={tocDragging}
+      type="button"
+      aria-label="Resize contents"
+      title="Drag to resize. Double-click to reset."
+      onpointerdown={onTocSplitDown}
+      onpointermove={onTocSplitMove}
+      onpointerup={onTocSplitUp}
+      onpointercancel={onTocSplitUp}
+      ondblclick={onTocSplitDbl}
+      onkeydown={onTocSplitKey}
+    ></button>
   {/if}
   <div class="pdf-scroll" bind:this={scroller}>
     <div class="pdf-pages pdfViewer" bind:this={host}></div>

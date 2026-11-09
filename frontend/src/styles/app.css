@@ -1072,7 +1072,12 @@ iframe.doc-frame.viewer-under {
 }
 
 .pdf-frame.pdf-has-toc .pdf-scroll {
-  left: 16.5rem;
+  left: var(--toc-width);
+}
+
+.pdf-frame.toc-dragging .pdf-scroll {
+  pointer-events: none;
+  user-select: none;
 }
 
 .pdf-toc {
@@ -1081,11 +1086,39 @@ iframe.doc-frame.viewer-under {
   left: 0;
   bottom: 0;
   z-index: 2;
-  width: 16.5rem;
+  width: var(--toc-width);
   overflow: auto;
   background: #10141c;
   border-right: 1px solid var(--border);
   color: var(--text);
+}
+
+.pdf-toc-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--toc-width);
+  z-index: 4;
+  width: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  transform: translateX(-50%);
+  background: var(--border);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pdf-toc-split:hover,
+.pdf-toc-split.active,
+.pdf-toc-split:focus-visible {
+  background: var(--accent);
+}
+
+.pdf-toc-split:focus-visible {
+  outline: 2px solid rgba(110, 168, 254, 0.45);
+  outline-offset: -2px;
 }
 
 .pdf-toc-body {
