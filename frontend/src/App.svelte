@@ -11,6 +11,7 @@
   import HelpDialog from './lib/HelpDialog.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
   import { hashForSameFile, revealHash } from './lib/inPageLink';
+  import { attachSideIndex } from './lib/sideIndex';
 
   let roots = $state<Root[]>([]);
   let projects = $state<Project[]>([]);
@@ -1189,9 +1190,11 @@
       revealHash(doc, hash);
     };
     doc.addEventListener('click', onLink, true);
+    const detachIndex = attachSideIndex(doc, frame.dataset.pageUrl || '');
     iframeCopyCleanup = () => {
       doc.removeEventListener('contextmenu', handler);
       doc.removeEventListener('click', onLink, true);
+      detachIndex();
     };
   }
 
