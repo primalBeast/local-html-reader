@@ -145,6 +145,7 @@
   let iframeEl = $state<HTMLIFrameElement | null>(null);
   let indexLineEl = $state<HTMLDivElement | null>(null);
   let syncIndex = $state<(() => void) | null>(null);
+  let showSyncContents = $state(false);
   let pdfRootEl = $state<HTMLElement | null>(null);
   let heldHtml = $state<DocumentHit | null>(null);
   let htmlCopyMenu = $state<{ x: number; y: number; text: string; image: HTMLImageElement | null } | null>(
@@ -700,6 +701,8 @@
     if (loadedKey === key || openingKey === key) return;
     openingKey = key;
     pageSummary = '';
+    syncIndex = null;
+    showSyncContents = false;
     const fromHtml = selected && !isPdfHit(selected);
     if (isPdfHit(doc) && fromHtml) heldHtml = selected;
     else if (!isPdfHit(doc)) heldHtml = null;
@@ -1197,6 +1200,7 @@
       frame.dataset.pageUrl || '',
       (sync) => {
         syncIndex = sync;
+        if (sync) showSyncContents = true;
       },
       (box) => {
         const el = indexLineEl;
@@ -1767,20 +1771,23 @@
                   openPathMenu(e, selected.root_path, selected.rel);
                 }}
               >{windowsRelPath(selected.rel)}</code>
-              {#if syncIndex && !isPdfHit(selected)}
-                <button
-                  class="index-sync"
-                  type="button"
-                  title="Scroll the index to the place shown in the document"
-                  onclick={() => syncIndex?.()}
-                >Index</button>
-              {/if}
             </div>
             {#if pageSummary}
               <div class="doc-pages">{pageSummary}</div>
             {/if}
           </div>
           <div class="page-finds">
+            {#if showSyncContents && !isPdfHit(selected)}
+              <button
+                class="sync-contents"
+                type="button"
+                title="Scroll the contents to the place shown in the document"
+                onclick={() => syncIndex?.()}
+              >Sync Contents</button>
+            {:else}
+              <span class="sync-contents sync-contents-spacer" aria-hidden="true">Sync Contents</span>
+            {/if}
+            <div class="page-finds-center">
             <form
               class="page-find list-find"
               onsubmit={(e) => {
@@ -1879,6 +1886,8 @@
               <button class="btn-ghost btn-small" type="button" onclick={pageFindPrev} disabled={!findHasHits('page')}>Prev</button>
               <button class="btn-ghost btn-small" type="submit" disabled={!pageQuery.trim()}>Next</button>
             </form>
+            </div>
+            <span class="sync-contents sync-contents-spacer" aria-hidden="true">Sync Contents</span>
           </div>
         </div>
         <div class="viewer-stage">

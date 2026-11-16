@@ -129,11 +129,19 @@ export function attachSideIndex(
       }
       const y = indexMarkY(marks, mid);
       const pane = index.getBoundingClientRect();
-      if (y === null || pane.width < 2 || pane.bottom < 0 || pane.top > view.innerHeight) {
+      const viewH = view.innerHeight || doc.documentElement.clientHeight;
+      if (y === null || pane.width < 2 || pane.height < 2) {
         onLine?.(null);
         return;
       }
-      onLine?.({ top: y - 1, left: pane.left, width: pane.width });
+      const visibleTop = Math.max(pane.top, 0);
+      const visibleBottom = Math.min(pane.bottom, viewH);
+      if (visibleBottom - visibleTop < 4) {
+        onLine?.(null);
+        return;
+      }
+      const clamped = Math.min(Math.max(y, visibleTop), visibleBottom - 3);
+      onLine?.({ top: clamped, left: pane.left, width: pane.width });
     };
 
     const sync = () => {

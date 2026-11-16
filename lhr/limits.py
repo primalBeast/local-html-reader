@@ -76,7 +76,7 @@ def help_document() -> dict:
                 "limits": [
                     f"Searched and shown up to {file_mb} MB. The page is the file itself, with no shorter cutoff.",
                     "Search uses the visible text, not scripts or tags.",
-                    "When the page has a side index of this file, a blue line marks the middle of the text you are reading. The Index button above the page scrolls that list to the line.",
+                    "When the page has a side index of this file, a blue line marks the middle of the text you are reading. Sync Contents, on the left of the search row, scrolls that list to the line.",
                 ],
             },
             {

@@ -928,8 +928,9 @@ input[type="text"]:focus {
   flex: 1 1 auto;
 }
 
-.index-sync {
+.sync-contents {
   flex: 0 0 auto;
+  justify-self: start;
   background: #1a73e8;
   color: #fff;
   border: 0;
@@ -939,10 +940,16 @@ input[type="text"]:focus {
   line-height: 1;
   padding: 0.28rem 0.5rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.index-sync:hover {
+.sync-contents:hover {
   background: #3b86ea;
+}
+
+.sync-contents-spacer {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .doc-path {
@@ -966,12 +973,20 @@ input[type="text"]:focus {
 
 .page-finds {
   margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.page-finds-center {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 1.85rem;
   min-width: 0;
-  width: 100%;
   flex-wrap: wrap;
 }
 
