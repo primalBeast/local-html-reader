@@ -137,6 +137,28 @@ def launch_in_default_app(path: Path) -> None:
     subprocess.Popen(["xdg-open", target])
 
 
+def reveal_in_explorer(path: Path) -> None:
+    """Open the folder in the system file manager. A file is selected, not opened."""
+    import subprocess
+    import sys
+
+    target = str(path)
+    if sys.platform == "win32":
+        if path.is_dir():
+            subprocess.Popen(["explorer", target])
+        else:
+            subprocess.Popen(["explorer", f"/select,{target}"])
+        return
+    if sys.platform == "darwin":
+        if path.is_dir():
+            subprocess.Popen(["open", target])
+        else:
+            subprocess.Popen(["open", "-R", target])
+        return
+    folder = target if path.is_dir() else str(path.parent)
+    subprocess.Popen(["xdg-open", folder])
+
+
 def _rel_posix(root: Path, file_path: Path) -> str:
     rel = file_path.resolve().relative_to(root.resolve())
     return rel.as_posix()

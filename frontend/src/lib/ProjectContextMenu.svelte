@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { bindMenuDismiss } from './dismissMenu';
+  import { focusFirstMenuItem, onMenuKeydown } from './menuKeys';
 
   let {
     x,
@@ -36,7 +37,16 @@
     top = nextTop;
   });
 
-  onMount(() => bindMenuDismiss(() => el, onClose));
+  onMount(() => {
+    const off = bindMenuDismiss(() => el, onClose);
+    queueMicrotask(() => focusFirstMenuItem(el));
+    return off;
+  });
+
+  $effect(() => {
+    if (!askRemove || !el) return;
+    queueMicrotask(() => focusFirstMenuItem(el));
+  });
 </script>
 
 <div
@@ -46,15 +56,17 @@
   style={`left:${left}px;top:${top}px`}
   role="menu"
   aria-label="Project actions for {name}"
+  tabindex="-1"
+  onkeydown={onMenuKeydown}
 >
   {#if askRemove}
     <p class="menu-confirm">Remove project “{name}”? Folders on disk are not deleted.</p>
     <div class="menu-confirm-actions">
-      <button type="button" onclick={() => (askRemove = false)}>Cancel</button>
-      <button type="button" class="danger" onclick={onDelete}>Remove</button>
+      <button type="button" data-menu-item onclick={() => (askRemove = false)}>Cancel</button>
+      <button type="button" class="danger" data-menu-item onclick={onDelete}>Remove</button>
     </div>
   {:else}
-    <button type="button" role="menuitem" onclick={onRename}>Rename…</button>
-    <button type="button" role="menuitem" onclick={() => (askRemove = true)}>Remove project</button>
+    <button type="button" role="menuitem" data-menu-item onclick={onRename}>Rename…</button>
+    <button type="button" role="menuitem" data-menu-item onclick={() => (askRemove = true)}>Remove project</button>
   {/if}
 </div>

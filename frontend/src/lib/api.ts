@@ -187,6 +187,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ root_id: rootId, rel }),
     }),
+  revealDocument: (rootId: string, rel: string) =>
+    request<{ ok: boolean }>('/api/documents/reveal', {
+      method: 'POST',
+      body: JSON.stringify({ root_id: rootId, rel }),
+    }),
   settings: () => request<Settings>('/api/settings'),
   patchSettings: (body: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PATCH', body: JSON.stringify(body) }),

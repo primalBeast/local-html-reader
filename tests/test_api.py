@@ -327,6 +327,33 @@ def test_launch_opens_file_in_default_app(client: TestClient, docs_tree: dict[st
     assert denied.status_code == 400
 
 
+def test_reveal_opens_explorer(client: TestClient, docs_tree: dict[str, Path], monkeypatch):
+    added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
+    assert added.status_code == 200, added.text
+    root_id = added.json()["id"]
+    opened: list[list[str]] = []
+
+    def fake_popen(args, **_kwargs):
+        opened.append(list(args))
+        return object()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    monkeypatch.setattr("sys.platform", "win32")
+    file_ok = client.post("/api/documents/reveal", json={"root_id": root_id, "rel": "index.html"})
+    assert file_ok.status_code == 200, file_ok.text
+    assert opened[-1][0] == "explorer"
+    assert "/select," in opened[-1][1]
+    assert opened[-1][1].endswith("index.html")
+
+    folder_ok = client.post("/api/documents/reveal", json={"root_id": root_id, "rel": ""})
+    assert folder_ok.status_code == 200, folder_ok.text
+    assert opened[-1][0] == "explorer"
+    assert not opened[-1][1].startswith("/select,")
+
+    denied = client.post("/api/documents/reveal", json={"root_id": root_id, "rel": "../secret.html"})
+    assert denied.status_code == 400
+
+
 def test_rejects_path_traversal(client: TestClient, docs_tree: dict[str, Path]):
     added = client.post("/api/roots", json={"path": str(docs_tree["root"])})
     root_id = added.json()["id"]

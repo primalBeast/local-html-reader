@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { bindMenuDismiss } from './dismissMenu';
+  import { focusFirstMenuItem, onMenuKeydown } from './menuKeys';
 
   let {
     x,
@@ -9,6 +10,7 @@
     rel,
     file = false,
     onLaunch,
+    onReveal,
     onClose,
   }: {
     x: number;
@@ -17,6 +19,7 @@
     rel: string;
     file?: boolean;
     onLaunch?: () => void;
+    onReveal?: () => void;
     onClose: () => void;
   } = $props();
 
@@ -62,7 +65,11 @@
     return dir || trimmed;
   }
 
-  onMount(() => bindMenuDismiss(() => el, onClose));
+  onMount(() => {
+    const off = bindMenuDismiss(() => el, onClose);
+    queueMicrotask(() => focusFirstMenuItem(el));
+    return off;
+  });
 </script>
 
 <div
@@ -71,11 +78,16 @@
   style={`left:${left}px;top:${top}px`}
   role="menu"
   aria-label="File actions"
+  tabindex="-1"
+  onkeydown={onMenuKeydown}
 >
   {#if file}
-    <button type="button" role="menuitem" onclick={() => onLaunch?.()}>Launch</button>
+    <button type="button" role="menuitem" data-menu-item onclick={() => onLaunch?.()}>Launch</button>
   {/if}
-  <button type="button" role="menuitem" onclick={() => void copy(directoryPath(full, file))}>Copy path</button>
-  <button type="button" role="menuitem" onclick={() => void copy(full)}>Copy full path</button>
-  <button type="button" role="menuitem" onclick={() => void copy(rel)}>Copy relative path</button>
+  {#if onReveal}
+    <button type="button" role="menuitem" data-menu-item onclick={() => onReveal?.()}>Show in Explorer</button>
+  {/if}
+  <button type="button" role="menuitem" data-menu-item onclick={() => void copy(directoryPath(full, file))}>Copy path</button>
+  <button type="button" role="menuitem" data-menu-item onclick={() => void copy(full)}>Copy full path</button>
+  <button type="button" role="menuitem" data-menu-item onclick={() => void copy(rel)}>Copy relative path</button>
 </div>

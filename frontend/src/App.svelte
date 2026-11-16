@@ -12,6 +12,7 @@
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
   import { hashForSameFile, revealHash } from './lib/inPageLink';
   import { attachSideIndex } from './lib/sideIndex';
+  import { focusFirstMenuItem, onMenuKeydown } from './lib/menuKeys';
 
   let roots = $state<Root[]>([]);
   let projects = $state<Project[]>([]);
@@ -126,6 +127,7 @@
   let inWebview = $state(false);
 
   let menuOpen = $state(false);
+  let projectMenuEl = $state<HTMLDivElement | null>(null);
   let helpOpen = $state(false);
   let pathMenu = $state<{
     x: number;
@@ -1439,6 +1441,24 @@
     }
   }
 
+  async function revealMenuPath() {
+    const menu = pathMenu;
+    pathMenu = null;
+    if (!menu?.rootId) return;
+    error = null;
+    try {
+      await api.revealDocument(menu.rootId, menu.relApi);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  $effect(() => {
+    if (!menuOpen) return;
+    const el = projectMenuEl;
+    queueMicrotask(() => focusFirstMenuItem(el, '.current'));
+  });
+
   $effect(() => {
     const el = iframeEl;
     const doc = heldHtml ?? (selected && !isPdfHit(selected) ? selected : null);
@@ -1500,6 +1520,8 @@
           class="menu-btn"
           type="button"
           class:open={menuOpen}
+          aria-haspopup="true"
+          aria-expanded={menuOpen}
           onclick={(e) => {
             e.stopPropagation();
             menuOpen = !menuOpen;
@@ -1518,57 +1540,78 @@
             }}
           ></div>
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="menu-drop project-menu" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-            <div class="menu-heading">Projects</div>
-            {#each projects as proj (proj.slug)}
-              <button
-                type="button"
-                role="menuitem"
-                class:current={proj.slug === currentSlug}
-                onclick={() => void selectProject(proj.slug)}
-                oncontextmenu={(e) => openProjectContextMenu(e, proj)}
-              >
-                {proj.slug === currentSlug ? '● ' : '○ '}{proj.name}
-              </button>
-            {/each}
-            <button
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                menuOpen = false;
-                projectNameDraft = '';
-                projectDialog = 'new';
-              }}
-            >+ New project…</button>
-            <div class="menu-heading">Folders in this project</div>
-            {#if !currentSlug}
-              <div class="menu-hint">Create a project, then add documentation folders.</div>
-            {:else if (currentProject?.folders.length ?? 0) === 0}
-              <div class="menu-hint">No folders yet. Add one below.</div>
-            {:else}
-              {#each currentProject?.folders || [] as folder (folder.id)}
-                <label
-                  class="folder-check"
-                  oncontextmenu={(e) => openPathMenu(e, folder.path, '')}
-                >
-                  <input
-                    type="checkbox"
-                    checked={folder.enabled}
-                    onchange={(e) => void toggleFolder(folder.id, e.currentTarget.checked)}
-                  />
-                  <span title={folder.path}>{folderLabel(folder.path)}</span>
+          <div
+            class="menu-drop project-menu"
+            bind:this={projectMenuEl}
+            role="presentation"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={onMenuKeydown}
+          >
+            <div class="menu-col projects" role="menu" aria-label="Projects">
+              <div class="menu-heading">Projects</div>
+              <div class="menu-col-scroll">
+                {#each projects as proj (proj.slug)}
                   <button
                     type="button"
-                    class="folder-remove"
-                    title="Remove folder from project"
-                    onclick={() => void removeFolder(folder.id)}
-                  >×</button>
-                </label>
-              {/each}
-            {/if}
-            <button type="button" role="menuitem" onclick={openFolderDialog} disabled={!currentSlug}>
-              + Add folder…
-            </button>
+                    role="menuitem"
+                    data-menu-item
+                    class:current={proj.slug === currentSlug}
+                    onclick={() => void selectProject(proj.slug)}
+                    oncontextmenu={(e) => openProjectContextMenu(e, proj)}
+                  >
+                    {proj.slug === currentSlug ? '● ' : '○ '}{proj.name}
+                  </button>
+                {/each}
+              </div>
+              <div class="menu-col-foot">
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-menu-item
+                  onclick={() => {
+                    menuOpen = false;
+                    projectNameDraft = '';
+                    projectDialog = 'new';
+                  }}
+                >+ New project…</button>
+              </div>
+            </div>
+            <div class="menu-col folders">
+              <div class="menu-heading">Folders in this project</div>
+              <div class="menu-col-scroll">
+                {#if !currentSlug}
+                  <div class="menu-hint">Create a project, then add documentation folders.</div>
+                {:else if (currentProject?.folders.length ?? 0) === 0}
+                  <div class="menu-hint">No folders yet. Add one below.</div>
+                {:else}
+                  {#each currentProject?.folders || [] as folder (folder.id)}
+                    <label
+                      class="folder-check"
+                      oncontextmenu={(e) => openPathMenu(e, folder.path, '', false, folder.id)}
+                    >
+                      <input
+                        type="checkbox"
+                        data-menu-item
+                        checked={folder.enabled}
+                        onchange={(e) => void toggleFolder(folder.id, e.currentTarget.checked)}
+                      />
+                      <span title={folder.path}>{folderLabel(folder.path)}</span>
+                      <button
+                        type="button"
+                        class="folder-remove"
+                        title="Remove folder from project"
+                        onclick={() => void removeFolder(folder.id)}
+                      >×</button>
+                    </label>
+                  {/each}
+                {/if}
+              </div>
+              <div class="menu-col-foot">
+                <button type="button" data-menu-item onclick={openFolderDialog} disabled={!currentSlug}>
+                  + Add folder…
+                </button>
+              </div>
+            </div>
           </div>
         {/if}
       </div>
@@ -2042,6 +2085,7 @@
     rel={pathMenu.rel}
     file={pathMenu.file}
     onLaunch={() => void launchMenuFile()}
+    onReveal={pathMenu.rootId ? () => void revealMenuPath() : undefined}
     onClose={() => {
       pathMenu = null;
     }}

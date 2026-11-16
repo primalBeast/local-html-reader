@@ -144,6 +144,33 @@ def launch_document(body: LaunchBody, project: str | None = Query(default=None))
     return {"ok": True}
 
 
+class RevealBody(BaseModel):
+    root_id: str
+    rel: str = ""
+
+
+@router.post("/api/documents/reveal")
+def reveal_document(body: RevealBody, project: str | None = Query(default=None)) -> dict:
+    try:
+        if not body.rel.strip():
+            path = documents.root_dir(body.root_id, project=project)
+        else:
+            path = documents.resolve_document(body.root_id, body.rel, project=project)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PathEscapeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="path not found")
+    try:
+        documents.reveal_in_explorer(path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="could not open the folder") from exc
+    return {"ok": True}
+
+
 @router.get("/view/{root_id}/{rel_path:path}")
 def view_file(root_id: str, rel_path: str, project: str | None = Query(default=None)):
     rel = unquote(rel_path or "")
