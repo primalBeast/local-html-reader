@@ -638,9 +638,8 @@
     }
   }
 
-  async function deleteNamedProject(slug: string, name: string) {
+  async function deleteNamedProject(slug: string) {
     projectMenu = null;
-    if (!confirm(`Delete project “${name}”? Folders on disk are not deleted.`)) return;
     error = null;
     try {
       await api.deleteProject(slug);
@@ -1768,7 +1767,7 @@
                 title={windowsFullPath(selected.root_path, selected.rel)}
                 oncontextmenu={(e) => {
                   if (!selected) return;
-                  openPathMenu(e, selected.root_path, selected.rel);
+                  openPathMenu(e, selected.root_path, selected.rel, true, selected.root_id);
                 }}
               >{windowsRelPath(selected.rel)}</code>
             </div>
@@ -2016,8 +2015,7 @@
     }}
     onDelete={() => {
       const slug = projectMenu?.slug;
-      const name = projectMenu?.name || slug || '';
-      if (slug) void deleteNamedProject(slug, name);
+      if (slug) void deleteNamedProject(slug);
     }}
     onClose={() => {
       projectMenu = null;

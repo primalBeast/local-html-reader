@@ -21,8 +21,10 @@
   let el = $state<HTMLDivElement | null>(null);
   let left = $state(0);
   let top = $state(0);
+  let askRemove = $state(false);
 
   $effect(() => {
+    askRemove;
     let nextLeft = x;
     let nextTop = y;
     if (el) {
@@ -40,10 +42,19 @@
 <div
   bind:this={el}
   class="path-menu"
+  class:menu-confirm-open={askRemove}
   style={`left:${left}px;top:${top}px`}
   role="menu"
   aria-label="Project actions for {name}"
 >
-  <button type="button" role="menuitem" onclick={onRename}>Rename…</button>
-  <button type="button" role="menuitem" onclick={onDelete}>Delete…</button>
+  {#if askRemove}
+    <p class="menu-confirm">Remove project “{name}”? Folders on disk are not deleted.</p>
+    <div class="menu-confirm-actions">
+      <button type="button" onclick={() => (askRemove = false)}>Cancel</button>
+      <button type="button" class="danger" onclick={onDelete}>Remove</button>
+    </div>
+  {:else}
+    <button type="button" role="menuitem" onclick={onRename}>Rename…</button>
+    <button type="button" role="menuitem" onclick={() => (askRemove = true)}>Remove project</button>
+  {/if}
 </div>

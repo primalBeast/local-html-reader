@@ -863,8 +863,34 @@ input[type="text"]:focus {
   cursor: pointer;
 }
 
-.path-menu button:hover {
-  background: var(--bg-hover);
+.path-menu.menu-confirm-open {
+  min-width: 240px;
+  max-width: 280px;
+}
+
+.path-menu .menu-confirm {
+  margin: 0.2rem 0.45rem 0.45rem;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.path-menu .menu-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+.path-menu .menu-confirm-actions button {
+  width: auto;
+}
+
+.path-menu button.danger {
+  color: var(--danger);
+}
+
+.path-menu button.danger:hover {
+  background: rgba(248, 113, 113, 0.12);
 }
 
 .muted {

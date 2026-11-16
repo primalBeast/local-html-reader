@@ -52,6 +52,16 @@
     onClose();
   }
 
+  function directoryPath(path: string, isFile: boolean): string {
+    if (!isFile) return path;
+    const trimmed = path.replace(/[\\/]+$/, '');
+    const cut = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'));
+    if (cut < 0) return trimmed;
+    const dir = trimmed.slice(0, cut);
+    if (/^[A-Za-z]:$/.test(dir)) return `${dir}\\`;
+    return dir || trimmed;
+  }
+
   onMount(() => bindMenuDismiss(() => el, onClose));
 </script>
 
@@ -65,7 +75,7 @@
   {#if file}
     <button type="button" role="menuitem" onclick={() => onLaunch?.()}>Launch</button>
   {/if}
-  <button type="button" role="menuitem" onclick={() => void copy(full)}>Copy path</button>
+  <button type="button" role="menuitem" onclick={() => void copy(directoryPath(full, file))}>Copy path</button>
   <button type="button" role="menuitem" onclick={() => void copy(full)}>Copy full path</button>
   <button type="button" role="menuitem" onclick={() => void copy(rel)}>Copy relative path</button>
 </div>
