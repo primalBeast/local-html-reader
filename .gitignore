@@ -28,3 +28,4 @@ htmlcov/
 # install.cmd: its own uv copy and its run log
 .tools/
 install.log
+webview.log

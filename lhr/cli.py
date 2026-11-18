@@ -43,16 +43,42 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
 
     use_webview = bool(getattr(args, "webview", False))
-    if use_webview:
-        from lhr.branding import apply_app_user_model_id, close_splash, start_splash
-
-        apply_app_user_model_id()
-        start_splash()
     url = f"http://{cfg.host}:{cfg.port}"
     if use_webview:
-        from lhr.webview_host import open_webview, port_listening
+        from lhr.branding import apply_app_user_model_id, close_splash, start_splash
+        from lhr.webview_host import start_webview_log
+
+        log_path = start_webview_log()
+        logging.getLogger("lhr").info(
+            "Local HTML Reader v%s webview start, python %s, log %s",
+            __version__,
+            sys.version.split()[0],
+            log_path,
+        )
+        apply_app_user_model_id()
+        start_splash()
+    if use_webview:
+        from lhr.webview_host import (
+            health_ok,
+            open_webview,
+            port_listening,
+            server_failed_message,
+            show_message,
+        )
 
         if port_listening(cfg.host, cfg.port):
+            if not health_ok(cfg.host, cfg.port, timeout=3.0):
+                logging.getLogger("lhr").error(
+                    "Port %s is in use but /health did not answer; another program may own it",
+                    cfg.port,
+                )
+                close_splash()
+                show_message(
+                    f"Port {cfg.port} is in use, but not by a working Local HTML Reader.\n\n"
+                    "Close the other program (or the old app window) and try again.\n\n"
+                    f"Details are in:\n{log_path}"
+                )
+                return 1
             logging.getLogger("lhr").info("Server already running — opening WebView2 at %s", url)
             try:
                 open_webview(url)
@@ -60,6 +86,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 logging.getLogger("lhr").exception("WebView failed")
                 print(exc, file=sys.stderr)
                 close_splash()
+                show_message(f"The app window could not open: {exc}\n\nTry start.cmd instead.")
                 return 1
             return 0
 
@@ -105,7 +132,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
         logging.getLogger("lhr").info("Ignoring --open because --webview was set")
 
     if use_webview:
-        from lhr.webview_host import open_webview, wait_for_port
+        from lhr.webview_host import (
+            open_webview,
+            server_failed_message,
+            show_message,
+            start_webview_log,
+            wait_for_health,
+        )
 
         config = uvicorn.Config(
             app,
@@ -113,6 +146,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             port=cfg.port,
             log_level="info",
         )
+        start_webview_log()  # uvicorn.Config just replaced its loggers' handlers
         server = uvicorn.Server(config)
         thread = threading.Thread(target=server.run, name="lhr-uvicorn", daemon=True)
         thread.start()
@@ -122,10 +156,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
             prewarm_search_workers()
         except Exception:
             logging.getLogger("lhr").exception("Search workers did not start")
-        if not wait_for_port(cfg.host, cfg.port):
-            logging.getLogger("lhr").error("Server did not start on %s", url)
+        if not wait_for_health(cfg.host, cfg.port):
+            logging.getLogger("lhr").error(
+                "Server did not start on %s (thread alive=%s)", url, thread.is_alive()
+            )
             server.should_exit = True
             close_splash()
+            show_message(server_failed_message(url, log_path))
             return 1
         try:
             open_webview(url)
@@ -135,6 +172,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             server.should_exit = True
             thread.join(timeout=5)
             close_splash()
+            show_message(f"The app window could not open: {exc}\n\nTry start.cmd instead.")
             return 1
         finally:
             close_splash()

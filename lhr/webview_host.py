@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
+import os
 import socket
 import sys
+import threading
 import time
-from collections.abc import Callable
+import urllib.request
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("lhr.webview")
@@ -54,6 +59,162 @@ def wait_for_port(host: str, port: int, timeout: float = 20.0) -> bool:
             return True
         time.sleep(0.1)
     return False
+
+
+# Seconds to wait for the first page load before telling the user what to try.
+LOAD_TIMEOUT_S = 15.0
+# Window colour before the page draws. Not black, so "nothing drew" is not mistaken for a crash.
+WINDOW_BG = "#2a2e36"
+_WINDOW_BG_RGB = (0x2A, 0x2E, 0x36)
+# pywebview passes these itself. WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS replaces them, so keep them.
+_PYWEBVIEW_BROWSER_ARGS = ("--disable-features=ElasticOverscroll", "--allow-file-access-from-files")
+_LOG_HANDLER_NAME = "lhr-webview-log"
+_log_handler: logging.Handler | None = None
+
+
+def webview_log_path(env: Mapping[str, str] | None = None) -> Path:
+    """webview.log next to start-webview.cmd (the repo root), unless LHR_WEBVIEW_LOG is set."""
+    env = os.environ if env is None else env
+    custom = (env.get("LHR_WEBVIEW_LOG") or "").strip()
+    if custom:
+        return Path(custom)
+    return Path(__file__).resolve().parents[1] / "webview.log"
+
+
+def _attach_log(name: str) -> None:
+    if _log_handler is None:
+        return
+    lg = logging.getLogger(name)
+    if name and lg.propagate:
+        return  # the root logger already writes it
+    if not any(h.get_name() == _LOG_HANDLER_NAME for h in lg.handlers):
+        lg.addHandler(_log_handler)
+
+
+def start_webview_log(path: Path | None = None) -> Path:
+    """Copy lhr, uvicorn and pywebview logs to webview.log. The .vbs launcher hides the console."""
+    global _log_handler
+    path = path or webview_log_path()
+    if _log_handler is None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(path, mode="a", encoding="utf-8")
+        except OSError:
+            logger.exception("Could not open %s", path)
+            return path
+        handler.set_name(_LOG_HANDLER_NAME)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        _log_handler = handler
+    # uvicorn and pywebview set up their own loggers; call again after they do.
+    for name in ("", "uvicorn", "uvicorn.access", "pywebview"):
+        _attach_log(name)
+    return path
+
+
+def webview2_browser_args(env: Mapping[str, str] | None = None) -> str:
+    """Value for WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS.
+
+    GPU drawing is off unless LHR_WEBVIEW_GPU=1. On managed laptops (EDR, Remote Desktop,
+    blocked GPU drivers) WebView2 with the GPU on can show only a black window.
+    """
+    env = os.environ if env is None else env
+    current = (env.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") or "").split()
+    wanted = list(_PYWEBVIEW_BROWSER_ARGS)
+    if (env.get("LHR_WEBVIEW_GPU") or "").strip() != "1":
+        wanted += ["--disable-gpu", "--disable-gpu-compositing"]
+    for flag in wanted:
+        if flag not in current:
+            current.append(flag)
+    return " ".join(current)
+
+
+def health_ok(host: str, port: int, timeout: float = 1.0) -> bool:
+    """True when GET /health answers {"status": "ok"}. A bare open port is not enough."""
+    h = f"[{host}]" if ":" in host else host
+    # No proxy: a corporate proxy must never see or answer requests for 127.0.0.1.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"http://{h}:{port}/health", timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read(4096) or b"{}")
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("status") == "ok"
+
+
+def wait_for_health(host: str, port: int, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    tries = 0
+    while time.monotonic() < deadline:
+        tries += 1
+        if health_ok(host, port):
+            logger.info("Health check passed on %s:%s after %d tries", host, port, tries)
+            return True
+        time.sleep(0.2)
+    logger.error("Health check failed on %s:%s after %d tries (%.0f s)", host, port, tries, timeout)
+    return False
+
+
+def load_timeout_message(url: str, log_path: Path, seconds: float = LOAD_TIMEOUT_S) -> str:
+    return (
+        f"The Local HTML Reader window did not finish loading after {int(seconds)} seconds.\n\n"
+        f"The app server is at {url}\n\n"
+        "Try start.cmd instead. It opens the same app in your web browser.\n\n"
+        f"Details are in:\n{log_path}"
+    )
+
+
+def server_failed_message(url: str, log_path: Path) -> str:
+    return (
+        f"The Local HTML Reader server did not start at {url}\n\n"
+        "Run install.cmd again, or try start.cmd.\n\n"
+        f"Details are in:\n{log_path}"
+    )
+
+
+def show_message(text: str, title: str = "Local HTML Reader") -> None:
+    """Native message box. It works even when WebView2 cannot draw anything."""
+    logger.warning("%s", text.replace("\n\n", " ").replace("\n", " "))
+    if sys.platform != "win32":
+        return
+    try:
+        # MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x30 | 0x10000 | 0x40000)
+    except Exception:
+        logger.exception("Could not show a message box")
+
+
+class LoadWatchdog:
+    """Calls on_timeout once if mark_loaded() is not called within timeout seconds."""
+
+    def __init__(self, timeout: float, on_timeout: Callable[[], Any]) -> None:
+        self.timeout = timeout
+        self.on_timeout = on_timeout
+        self._loaded = threading.Event()
+        self._stopped = threading.Event()
+        self.fired = False
+
+    def mark_loaded(self) -> None:
+        self._loaded.set()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._loaded.set()
+
+    def start(self) -> threading.Thread:
+        t = threading.Thread(target=self._run, name="lhr-load-watchdog", daemon=True)
+        t.start()
+        return t
+
+    def _run(self) -> None:
+        if self._loaded.wait(self.timeout) or self._stopped.is_set():
+            return
+        self.fired = True
+        try:
+            self.on_timeout()
+        except Exception:
+            logger.exception("Load watchdog callback failed")
 
 
 def reload_window(window: Any, url: str) -> None:
@@ -356,7 +517,7 @@ def _enable_edge_resize(window: Any, border_px: int = 8, top_px: int = 4) -> Non
         from System.Drawing import Color as _Color
 
         if wv is not None and hasattr(wv, "DefaultBackgroundColor"):
-            wv.DefaultBackgroundColor = _Color.FromArgb(255, 18, 21, 28)
+            wv.DefaultBackgroundColor = _Color.FromArgb(255, *_WINDOW_BG_RGB)
     except Exception:
         pass
 
@@ -475,9 +636,27 @@ def open_webview(url: str, title: str = "Local HTML Reader") -> None:
             "pywebview is not installed. From the repo folder run: uv sync"
         ) from exc
 
+    _attach_log("pywebview")
+    log_path = webview_log_path()
+    args = webview2_browser_args()
+    os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = args
+    logger.info("Opening WebView2 at %s", url)
+    logger.info("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=%s", args)
+    logger.info("pywebview %s", getattr(webview, "__version__", "?"))
+
     bridge = WebviewBridge()
     width, height = _startup_window_size()
     from lhr.branding import close_splash, icon_path
+
+    def on_load_timeout() -> None:
+        logger.error("Page did not load within %.0f s: %s", LOAD_TIMEOUT_S, url)
+        try:
+            close_splash()
+        except Exception:
+            logger.exception("Could not close splash")
+        show_message(load_timeout_message(url, log_path))
+
+    watchdog = LoadWatchdog(LOAD_TIMEOUT_S, on_load_timeout)
 
     ico = icon_path()
     window = webview.create_window(
@@ -487,7 +666,7 @@ def open_webview(url: str, title: str = "Local HTML Reader") -> None:
         height=height,
         min_size=(900, 600),
         js_api=bridge,
-        background_color="#000000",
+        background_color=WINDOW_BG,
         frameless=True,
         easy_drag=False,
         shadow=True,
@@ -500,38 +679,48 @@ def open_webview(url: str, title: str = "Local HTML Reader") -> None:
     _active["is_maximized"] = False
     _active["restore_bounds"] = None
 
-    def bind_keys() -> None:
+    def on_loaded() -> None:
+        watchdog.mark_loaded()
+        try:
+            logger.info("Page loaded: %s", window.get_current_url())
+        except Exception:
+            logger.info("Page loaded")
+        # Close the splash when the page has drawn, not when the empty window appears.
+        try:
+            close_splash()
+        except Exception:
+            logger.exception("Could not close splash")
         try:
             window.evaluate_js(F5_RELOAD_JS)
         except Exception:
             logger.exception("Could not bind F5/F11 in WebView")
 
     def on_shown() -> None:
-        try:
-            close_splash()
-        except Exception:
-            logger.exception("Could not close splash")
+        logger.info("Window shown; waiting for the page to load")
         try:
             _enable_edge_resize(window)
         except Exception:
             logger.exception("Could not enable resize frame on the frameless window")
 
-    window.events.loaded += bind_keys
+    window.events.loaded += on_loaded
     window.events.shown += on_shown
     start_kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
         start_kwargs["gui"] = "edgechromium"
     if ico.is_file():
         start_kwargs["icon"] = str(ico)
+    logger.info("Starting pywebview with gui=%s", start_kwargs.get("gui", "default"))
+    watchdog.start()
     try:
         webview.start(**start_kwargs)
     except Exception:
-        logger.exception("WebView2 (edgechromium) failed; retrying with the default GUI")
-        retry_kwargs: dict[str, Any] = {}
-        if ico.is_file():
-            retry_kwargs["icon"] = str(ico)
-        webview.start(**retry_kwargs)
+        # No retry with the default GUI: that can land on the old IE engine, which cannot
+        # run the app's module script and shows the same empty dark window.
+        logger.exception("WebView2 (edgechromium) failed")
+        raise
     finally:
+        watchdog.stop()
+        logger.info("WebView window closed")
         try:
             close_splash()
         except Exception:

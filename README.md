@@ -47,7 +47,7 @@ Then open [http://127.0.0.1:8766](http://127.0.0.1:8766) if it did not open auto
 
 1. `install.cmd` — installs uv + app deps, then checks the install. If no uv is installed it keeps its own copy in `.tools\uv\uv.exe`, and it saves each run to `install.log`
 2. `start.cmd` (or `start.vbs`) — starts the server and opens the browser (`start.vbs` hides the console)
-3. `start-webview.cmd` (or `start-webview.vbs`) — same server in a WebView2 window; the helper console starts minimized (open it from the taskbar to read logs). Run it again for a second window; each window can have a different project open.
+3. `start-webview.cmd` (or `start-webview.vbs`) — same server in a WebView2 window; the helper console starts minimized (open it from the taskbar to read logs). Run it again for a second window; each window can have a different project open. It writes `webview.log` next to the script. GPU drawing is off by default (a black window on managed laptops); set `LHR_WEBVIEW_GPU=1` to turn it on.
 
 If you ever see `ModuleNotFoundError: No module named 'lhr'`:
 

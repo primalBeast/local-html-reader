@@ -20,7 +20,13 @@ if not defined PATHEXT set "PATHEXT=.COM;.EXE;.BAT;.CMD"
 set "PATH=%SystemRoot%\System32;%SystemRoot%\System32\WindowsPowerShell\v1.0;%PATH%"
 rem Find uv by full path. install.cmd puts its own copy in .tools\uv.
 call "%~dp0scripts\find-uv.cmd"
+rem The .vbs launcher hides this console, so the app also writes webview.log next to this file.
+set "LHR_WEBVIEW_LOG=%~dp0webview.log"
+> "%LHR_WEBVIEW_LOG%" echo start-webview.cmd  %DATE% %TIME%
+>> "%LHR_WEBVIEW_LOG%" echo uv: %UV_EXE%
+>> "%LHR_WEBVIEW_LOG%" echo LHR_WEBVIEW_GPU=%LHR_WEBVIEW_GPU%
 if not defined UV_EXE (
+  >> "%LHR_WEBVIEW_LOG%" echo uv.exe not found. Run install.cmd.
   echo uv is not installed. Double-click install.cmd first.
   echo.
   pause
@@ -49,4 +55,6 @@ echo http://127.0.0.1:8766
 echo.
 
 "%UV_EXE%" run lhr serve --webview
-exit /b %ERRORLEVEL%
+set "RC=%ERRORLEVEL%"
+>> "%LHR_WEBVIEW_LOG%" echo start-webview.cmd: app exited with code %RC%
+exit /b %RC%

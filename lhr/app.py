@@ -23,6 +23,10 @@ logger = logging.getLogger("lhr.app")
 # Windows maps .mjs to text/plain; nosniff then blocks pdf.js module workers.
 mimetypes.add_type("text/javascript", ".mjs")
 mimetypes.add_type("text/javascript", ".cjs")
+# Some Windows PCs map .js or .css to text/plain in the registry. With nosniff the
+# browser then refuses the app's module script and the window stays an empty dark page.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 
 def repo_root() -> Path:

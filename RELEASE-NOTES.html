@@ -113,6 +113,22 @@
 
       <article>
         <div class="row">
+          <h2>No more black WebView2 window</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>The WebView2 window starts with GPU drawing off, which fixes the black window on the managed work laptop. Set <code>LHR_WEBVIEW_GPU=1</code> to turn GPU drawing back on.</li>
+          <li>The app waits for the server's <code>/health</code> check before it opens the window, and the splash stays up until the page has loaded.</li>
+          <li>If the page has not loaded after 15 seconds, or the server does not start, a message box suggests start.cmd instead of leaving an empty window.</li>
+          <li>The server always sends .js and .css files with the right type, even when Windows lists them as plain text. Otherwise the app page can stay empty and dark.</li>
+          <li>If WebView2 fails, the app says so and suggests start.cmd. It no longer falls back to the old Internet Explorer engine, which cannot run the app.</li>
+          <li>start-webview writes <code>webview.log</code> next to the script, because start-webview.vbs hides the console. The window is dark grey instead of black before the page draws.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Find uv by full path in install.cmd</h2>
           <span class="chip">b26cc26</span>
           <span class="date">2026-11-18</span>
