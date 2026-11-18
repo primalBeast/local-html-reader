@@ -15,6 +15,9 @@ echo.
 set "FAILED=0"
 rem Corporate laptops often need the Windows certificate store (not webpki).
 set "UV_NATIVE_TLS=1"
+if not defined SystemRoot set "SystemRoot=C:\Windows"
+rem The prompt on a new laptop can omit System32 and WindowsApps, so curl and winget look missing.
+set "PATH=%SystemRoot%\System32;%SystemRoot%\System32\WindowsPowerShell\v1.0;%LOCALAPPDATA%\Microsoft\WindowsApps;%PATH%"
 
 call :refresh_uv_path
 where uv >nul 2>&1
@@ -133,6 +136,8 @@ for /d %%D in ("%ProgramFiles%\WinGet\Packages\astral-sh.uv*") do (
   if exist "%%~D\uv.exe" set "PATH=%%~D;%PATH%"
   for /d %%S in ("%%~D\*") do if exist "%%~S\uv.exe" set "PATH=%%~S;%PATH%"
 )
+for /f "delims=" %%F in ('dir /s /b "%LOCALAPPDATA%\Microsoft\WinGet\Packages\uv.exe" 2^>nul') do set "PATH=%%~dpF;%PATH%"
+for /f "delims=" %%F in ('dir /s /b "%ProgramFiles%\WinGet\Packages\uv.exe" 2^>nul') do set "PATH=%%~dpF;%PATH%"
 rem A winget install updates the saved PATH. This window still has the old one.
 for /f "tokens=2,*" %%A in ('reg query HKCU\Environment /v Path 2^>nul') do call set "PATH=%%B;%PATH%"
 exit /b 0
@@ -147,30 +152,35 @@ if not errorlevel 1 (
   if not errorlevel 1 exit /b 0
 )
 
-echo [..] Downloading uv. This does not use the PowerShell installer.
+echo [..] Downloading uv.
 set "UV_ZIP=%TEMP%\uv-windows.zip"
 set "UV_DIR=%USERPROFILE%\.local\bin"
-if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
-  set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-pc-windows-msvc.zip"
-) else (
-  set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
-)
-where curl >nul 2>&1
-if errorlevel 1 (
-  echo [FAIL] curl is not available, so uv could not be downloaded.
-  exit /b 1
-)
-curl -fsSL -L -o "%UV_ZIP%" "%UV_URL%"
+set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-pc-windows-msvc.zip"
+call :download_uv_zip
 if errorlevel 1 (
   echo [FAIL] Could not download uv.
   exit /b 1
 )
 if not exist "%UV_DIR%" mkdir "%UV_DIR%"
-tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+if exist "%SystemRoot%\System32\tar.exe" (
+  "%SystemRoot%\System32\tar.exe" -xf "%UV_ZIP%" -C "%UV_DIR%"
+) else (
+  tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+)
 if errorlevel 1 (
   powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath $env:TEMP\uv-windows.zip -DestinationPath $env:USERPROFILE\.local\bin"
 )
 del "%UV_ZIP%" >nul 2>&1
 call :refresh_uv_path
 where uv >nul 2>&1
+exit /b %ERRORLEVEL%
+
+:download_uv_zip
+if exist "%SystemRoot%\System32\curl.exe" (
+  "%SystemRoot%\System32\curl.exe" -fsSL -L -o "%UV_ZIP%" "%UV_URL%"
+  if not errorlevel 1 exit /b 0
+)
+echo [..] curl is not available. Downloading with PowerShell...
+powershell -NoProfile -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri $env:UV_URL -OutFile $env:UV_ZIP; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
 exit /b %ERRORLEVEL%

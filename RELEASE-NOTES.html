@@ -113,6 +113,18 @@
 
       <article>
         <div class="row">
+          <h2>Download uv without curl</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>install.cmd puts System32 and WindowsApps on PATH, so curl and winget are found on a new laptop.</li>
+          <li>If curl is still missing, the download uses PowerShell. That does not run a script, so the execution policy does not apply.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Install uv when PowerShell blocks scripts</h2>
           <span class="chip">4974879</span>
           <span class="date">2026-11-18</span>
