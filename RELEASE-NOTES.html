@@ -113,6 +113,18 @@
 
       <article>
         <div class="row">
+          <h2>Install uv when PowerShell blocks scripts</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>install.cmd looks for a uv that winget already installed, including one that is not on PATH in the current window.</li>
+          <li>If that fails, it downloads uv directly. It no longer runs the PowerShell installer that stops on a locked execution policy.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Split the project menu and open folders in Explorer</h2>
           <span class="chip">7ddb02c</span>
           <span class="date">2026-11-16</span>

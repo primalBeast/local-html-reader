@@ -123,6 +123,18 @@ exit /b %FAILED%
 :refresh_uv_path
 if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 if exist "%USERPROFILE%\.cargo\bin\uv.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe" set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
+if exist "%ProgramFiles%\WinGet\Links\uv.exe" set "PATH=%ProgramFiles%\WinGet\Links;%PATH%"
+for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv*") do (
+  if exist "%%~D\uv.exe" set "PATH=%%~D;%PATH%"
+  for /d %%S in ("%%~D\*") do if exist "%%~S\uv.exe" set "PATH=%%~S;%PATH%"
+)
+for /d %%D in ("%ProgramFiles%\WinGet\Packages\astral-sh.uv*") do (
+  if exist "%%~D\uv.exe" set "PATH=%%~D;%PATH%"
+  for /d %%S in ("%%~D\*") do if exist "%%~S\uv.exe" set "PATH=%%~S;%PATH%"
+)
+rem A winget install updates the saved PATH. This window still has the old one.
+for /f "tokens=2,*" %%A in ('reg query HKCU\Environment /v Path 2^>nul') do call set "PATH=%%B;%PATH%"
 exit /b 0
 
 :install_uv
@@ -135,6 +147,30 @@ if not errorlevel 1 (
   if not errorlevel 1 exit /b 0
 )
 
-echo [..] Trying the official uv installer...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+echo [..] Downloading uv. This does not use the PowerShell installer.
+set "UV_ZIP=%TEMP%\uv-windows.zip"
+set "UV_DIR=%USERPROFILE%\.local\bin"
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+  set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-pc-windows-msvc.zip"
+) else (
+  set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+)
+where curl >nul 2>&1
+if errorlevel 1 (
+  echo [FAIL] curl is not available, so uv could not be downloaded.
+  exit /b 1
+)
+curl -fsSL -L -o "%UV_ZIP%" "%UV_URL%"
+if errorlevel 1 (
+  echo [FAIL] Could not download uv.
+  exit /b 1
+)
+if not exist "%UV_DIR%" mkdir "%UV_DIR%"
+tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+if errorlevel 1 (
+  powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath $env:TEMP\uv-windows.zip -DestinationPath $env:USERPROFILE\.local\bin"
+)
+del "%UV_ZIP%" >nul 2>&1
+call :refresh_uv_path
+where uv >nul 2>&1
 exit /b %ERRORLEVEL%
