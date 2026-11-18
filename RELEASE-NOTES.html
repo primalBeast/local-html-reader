@@ -113,6 +113,18 @@
 
       <article>
         <div class="row">
+          <h2>Keep uv on PATH after download</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>install.cmd reads the saved PATH without letting a folder like Program Files (x86) wipe the list.</li>
+          <li>It unpacks uv with PowerShell and says if uv.exe is missing from the download.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Download uv without curl</h2>
           <span class="chip">3aa5d69</span>
           <span class="date">2026-11-18</span>

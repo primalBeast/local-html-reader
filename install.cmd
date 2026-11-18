@@ -124,29 +124,27 @@ pause
 exit /b %FAILED%
 
 :refresh_uv_path
+set "USER_PATH="
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','User')"`) do set "USER_PATH=%%A"
+if defined USER_PATH set "PATH=%USER_PATH%;%PATH%"
 if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 if exist "%USERPROFILE%\.cargo\bin\uv.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe" set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 if exist "%ProgramFiles%\WinGet\Links\uv.exe" set "PATH=%ProgramFiles%\WinGet\Links;%PATH%"
-for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv*") do (
-  if exist "%%~D\uv.exe" set "PATH=%%~D;%PATH%"
-  for /d %%S in ("%%~D\*") do if exist "%%~S\uv.exe" set "PATH=%%~S;%PATH%"
-)
-for /d %%D in ("%ProgramFiles%\WinGet\Packages\astral-sh.uv*") do (
-  if exist "%%~D\uv.exe" set "PATH=%%~D;%PATH%"
-  for /d %%S in ("%%~D\*") do if exist "%%~S\uv.exe" set "PATH=%%~S;%PATH%"
-)
 for /f "delims=" %%F in ('dir /s /b "%LOCALAPPDATA%\Microsoft\WinGet\Packages\uv.exe" 2^>nul') do set "PATH=%%~dpF;%PATH%"
 for /f "delims=" %%F in ('dir /s /b "%ProgramFiles%\WinGet\Packages\uv.exe" 2^>nul') do set "PATH=%%~dpF;%PATH%"
-rem A winget install updates the saved PATH. This window still has the old one.
-for /f "tokens=2,*" %%A in ('reg query HKCU\Environment /v Path 2^>nul') do call set "PATH=%%B;%PATH%"
 exit /b 0
 
 :install_uv
-where winget >nul 2>&1
-if not errorlevel 1 (
+set "WINGET="
+if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe" set "WINGET=%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe"
+if not defined WINGET (
+  where winget >nul 2>&1
+  if not errorlevel 1 set "WINGET=winget"
+)
+if defined WINGET (
   echo [..] Trying winget...
-  winget install --id=astral-sh.uv -e --accept-package-agreements --accept-source-agreements
+  "%WINGET%" install --id=astral-sh.uv -e --accept-package-agreements --accept-source-agreements
   call :refresh_uv_path
   where uv >nul 2>&1
   if not errorlevel 1 exit /b 0
@@ -163,14 +161,19 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist "%UV_DIR%" mkdir "%UV_DIR%"
-if exist "%SystemRoot%\System32\tar.exe" (
-  "%SystemRoot%\System32\tar.exe" -xf "%UV_ZIP%" -C "%UV_DIR%"
-) else (
-  tar -xf "%UV_ZIP%" -C "%UV_DIR%"
+powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath $env:TEMP\uv-windows.zip -DestinationPath $env:USERPROFILE\.local\bin"
+if not exist "%UV_DIR%\uv.exe" (
+  for /f "delims=" %%F in ('dir /s /b "%UV_DIR%\uv.exe" 2^>nul') do copy /Y "%%F" "%UV_DIR%\uv.exe" >nul
 )
-if errorlevel 1 (
-  powershell -NoProfile -Command "Expand-Archive -Force -LiteralPath $env:TEMP\uv-windows.zip -DestinationPath $env:USERPROFILE\.local\bin"
+if not exist "%UV_DIR%\uv.exe" (
+  echo [FAIL] The download did not contain uv.exe.
+  echo        Zip:
+  dir "%UV_ZIP%"
+  echo        Unpacked folder:
+  dir /s /b "%UV_DIR%"
+  exit /b 1
 )
+echo [OK]   uv.exe saved to %UV_DIR%
 del "%UV_ZIP%" >nul 2>&1
 call :refresh_uv_path
 where uv >nul 2>&1
