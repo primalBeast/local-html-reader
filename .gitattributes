@@ -1,0 +1,5 @@
+# cmd.exe misreads labels (call :x, goto :x) in batch files saved with LF only.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.vbs text eol=crlf
+*.ps1 text eol=crlf

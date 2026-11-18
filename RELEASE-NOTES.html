@@ -113,6 +113,20 @@
 
       <article>
         <div class="row">
+          <h2>Find uv by full path in install.cmd</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>install.cmd, start.cmd and start-webview.cmd look for uv.exe with plain file checks and call it by full path. They no longer use <code>where</code>, which failed on the work laptop even for curl and winget.</li>
+          <li>If no uv is found, install.cmd tries winget, then downloads uv into <code>.tools\uv</code> in the app folder. It unpacks with tar.exe, or .NET ZipFile when tar fails. It no longer needs PowerShell scripts, which Group Policy blocks.</li>
+          <li>It checks the download is a real zip and says when a proxy or security software probably blocked it.</li>
+          <li>Each step shows its exit code, and the whole run is saved to <code>install.log</code>.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Keep uv on PATH after download</h2>
           <span class="chip">2d0875c</span>
           <span class="date">2026-11-18</span>

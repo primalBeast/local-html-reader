@@ -6,7 +6,8 @@ REM Splash is started by start-webview.vbs, or by Python if this cmd is run alon
 REM Starting it here as well closed the first splash and opened a second one.
 
 REM Minimize THIS console (do not hide it). Logs stay in the window; restore from the taskbar.
-powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\minimize-console.ps1"
+rem Group Policy can block this script. That only leaves the console unminimized.
+powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\minimize-console.ps1" >nul 2>&1
 
 echo.
 echo ============================================
@@ -14,9 +15,12 @@ echo  Local HTML Reader  (WebView2 window)
 echo ============================================
 echo.
 
-call :refresh_uv_path
-where uv >nul 2>&1
-if errorlevel 1 (
+if not defined SystemRoot set "SystemRoot=C:\Windows"
+if not defined PATHEXT set "PATHEXT=.COM;.EXE;.BAT;.CMD"
+set "PATH=%SystemRoot%\System32;%SystemRoot%\System32\WindowsPowerShell\v1.0;%PATH%"
+rem Find uv by full path. install.cmd puts its own copy in .tools\uv.
+call "%~dp0scripts\find-uv.cmd"
+if not defined UV_EXE (
   echo uv is not installed. Double-click install.cmd first.
   echo.
   pause
@@ -44,10 +48,5 @@ echo.
 echo http://127.0.0.1:8766
 echo.
 
-uv run lhr serve --webview
+"%UV_EXE%" run lhr serve --webview
 exit /b %ERRORLEVEL%
-
-:refresh_uv_path
-if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
-if exist "%USERPROFILE%\.cargo\bin\uv.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
-exit /b 0

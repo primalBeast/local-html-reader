@@ -25,3 +25,6 @@ htmlcov/
 .lhr-data/
 # Do not ignore frontend/dist — required for clone-and-run
 .pytest_cache/
+# install.cmd: its own uv copy and its run log
+.tools/
+install.log

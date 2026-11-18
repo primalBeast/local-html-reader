@@ -8,9 +8,12 @@ echo  Local HTML Reader
 echo ============================================
 echo.
 
-call :refresh_uv_path
-where uv >nul 2>&1
-if errorlevel 1 (
+if not defined SystemRoot set "SystemRoot=C:\Windows"
+if not defined PATHEXT set "PATHEXT=.COM;.EXE;.BAT;.CMD"
+set "PATH=%SystemRoot%\System32;%SystemRoot%\System32\WindowsPowerShell\v1.0;%PATH%"
+rem Find uv by full path. install.cmd puts its own copy in .tools\uv.
+call "%~dp0scripts\find-uv.cmd"
+if not defined UV_EXE (
   echo uv is not installed. Double-click install.cmd first.
   echo.
   pause
@@ -31,7 +34,7 @@ if not exist "frontend\dist\index.html" (
   exit /b 1
 )
 
-netstat -ano | findstr ":8766" | findstr "LISTENING" >nul
+"%SystemRoot%\System32\netstat.exe" -ano | "%SystemRoot%\System32\findstr.exe" ":8766" | "%SystemRoot%\System32\findstr.exe" "LISTENING" >nul
 if not errorlevel 1 (
   echo Already running on http://127.0.0.1:8766
   echo Opening the browser...
@@ -48,7 +51,7 @@ echo.
 echo http://127.0.0.1:8766
 echo.
 
-uv run lhr serve --open
+"%UV_EXE%" run lhr serve --open
 set "RC=%ERRORLEVEL%"
 echo.
 if not "%RC%"=="0" (
@@ -57,8 +60,3 @@ if not "%RC%"=="0" (
 )
 pause
 exit /b %RC%
-
-:refresh_uv_path
-if exist "%USERPROFILE%\.local\bin\uv.exe" set "PATH=%USERPROFILE%\.local\bin;%PATH%"
-if exist "%USERPROFILE%\.cargo\bin\uv.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
-exit /b 0
