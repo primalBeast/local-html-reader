@@ -495,6 +495,50 @@ def _apply_dark_frame(form: Any, hwnd: int) -> None:
         logger.exception("Could not set dark DWM frame colors")
 
 
+def _disable_native_zoom(wv: Any) -> None:
+    """Stop WebView2 from scaling the whole page on Ctrl+wheel.
+
+    pywebview's edgechromium ``on_webview_ready`` sets ``IsZoomControlEnabled``
+    to True. Reset ZoomFactor so a zoom applied before this hook does not stick.
+    """
+    try:
+        core = getattr(wv, "CoreWebView2", None)
+        if core is not None:
+            core.Settings.IsZoomControlEnabled = False
+    except Exception:
+        logger.exception("Could not disable WebView2 zoom control")
+    try:
+        if hasattr(wv, "ZoomFactor"):
+            wv.ZoomFactor = 1.0
+    except Exception:
+        logger.exception("Could not reset WebView2 ZoomFactor")
+
+
+def _hook_native_zoom(wv: Any) -> None:
+    """Apply the zoom lock now, or when the core finishes initialising."""
+    core = None
+    try:
+        core = getattr(wv, "CoreWebView2", None)
+    except Exception:
+        core = None
+    if core is not None:
+        _disable_native_zoom(wv)
+        return
+
+    def on_ready(_sender: Any, args: Any) -> None:
+        try:
+            if args is not None and hasattr(args, "IsSuccess") and not bool(args.IsSuccess):
+                return
+        except Exception:
+            return
+        _disable_native_zoom(wv)
+
+    try:
+        wv.CoreWebView2InitializationCompleted += on_ready
+    except Exception:
+        logger.exception("Could not subscribe to WebView2 initialization")
+
+
 def _enable_edge_resize(window: Any, border_px: int = 8, top_px: int = 4) -> None:
     """Inset WebView2 and handle Form.MouseDown so edge grabs run on the UI thread."""
     form = getattr(window, "native", None)
@@ -524,6 +568,7 @@ def _enable_edge_resize(window: Any, border_px: int = 8, top_px: int = 4) -> Non
     from System.Windows.Forms import Cursors, DockStyle, MouseButtons
 
     if wv is not None:
+        _hook_native_zoom(wv)
         try:
             wv.Dock = getattr(DockStyle, "None")
         except Exception:
@@ -671,6 +716,7 @@ def open_webview(url: str, title: str = "Local HTML Reader") -> None:
         easy_drag=False,
         shadow=True,
         resizable=True,
+        zoomable=False,
     )
     if window is None:
         raise RuntimeError("Could not create the WebView2 window")

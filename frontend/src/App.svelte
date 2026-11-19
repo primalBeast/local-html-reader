@@ -13,6 +13,18 @@
   import { hashForSameFile, revealHash } from './lib/inPageLink';
   import { attachSideIndex } from './lib/sideIndex';
   import { focusFirstMenuItem, onMenuKeydown } from './lib/menuKeys';
+  import {
+    applyWheelZoom,
+    scrollAfterZoom,
+    zoomAfterOpen,
+    zoomFromDrag,
+    zoomFromKey,
+    zoomKeyCommand,
+    zoomReadout,
+    clampDocZoom,
+    type DocZoomAnchor,
+    type PdfScaleOrigin,
+  } from './lib/docZoom';
 
   let roots = $state<Root[]>([]);
   let projects = $state<Project[]>([]);
@@ -44,86 +56,138 @@
   let error = $state<string | null>(null);
   let version = $state('');
   let serverOk = $state(true);
-  const ZOOM_MIN = 0.5;
-  const ZOOM_MAX = 2;
-  let uiZoom = $state(1);
-
-  function clampZoom(value: number): number {
-    return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
-  }
-
-  function setUiZoom(value: number) {
-    uiZoom = clampZoom(value);
-    try {
-      localStorage.setItem('lhr-ui-zoom', String(uiZoom));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function zoomFromPointerScrub(startZoom: number, dx: number, dy: number): number {
-    return clampZoom(startZoom * Math.exp((dx - dy) * 0.008));
-  }
-
-  function zoomFromWheelDelta(oldZoom: number, deltaY: number, deltaMode = 0): number {
-    let dy = deltaY;
-    if (deltaMode === 1) dy *= 16;
-    if (deltaMode === 2) dy *= 800;
-    return clampZoom(oldZoom * Math.exp(-dy * 0.0015));
-  }
+  /** Scale of the open document only. Not saved. 1 is 100%. */
+  let docZoom = $state(1);
+  /** Fraction of a percent dropped by the integer snap, so trackpad ticks add up. */
+  let wheelRemainder = 0;
+  let pdfOrigin = $state<PdfScaleOrigin | null>(null);
+  let pdfOriginSeq = 0;
 
   const zoomScrub = {
     pointerId: -1,
-    startX: 0,
     startY: 0,
     startZoom: 1,
     dragging: false,
   };
 
+  function setDocZoom(value: number, anchor: DocZoomAnchor | null = null) {
+    docZoom = clampDocZoom(value);
+    if (selected && isPdfHit(selected)) {
+      if (anchor) pdfOrigin = { x: anchor.x, y: anchor.y, id: ++pdfOriginSeq };
+      else pdfOrigin = null;
+      return;
+    }
+    applyHtmlZoom(anchor);
+  }
+
+  function applyHtmlZoom(anchor: DocZoomAnchor | null) {
+    const doc = iframeDoc();
+    const root = doc?.documentElement;
+    if (!doc || !root) return;
+    const scrolling = (doc.scrollingElement ?? root) as HTMLElement;
+    const styled = Number.parseFloat(root.style.getPropertyValue('zoom'));
+    const oldZoom = Number.isFinite(styled) && styled > 0 ? styled : 1;
+    const nextScroll = scrollAfterZoom({
+      scrollLeft: scrolling.scrollLeft,
+      scrollTop: scrolling.scrollTop,
+      oldZoom,
+      newZoom: docZoom,
+      anchor,
+    });
+    root.style.setProperty('zoom', String(docZoom));
+    scrolling.scrollLeft = nextScroll.scrollLeft;
+    scrolling.scrollTop = nextScroll.scrollTop;
+  }
+
+  /** List, tree, or search — including the document that is already open. */
+  function onUserOpenDocument() {
+    wheelRemainder = 0;
+    setDocZoom(zoomAfterOpen('user', docZoom));
+  }
+
+  /** Same document loaded again (iframe refresh). Does not reset zoom. */
+  function onDocumentContentReload() {
+    setDocZoom(zoomAfterOpen('reload', docZoom));
+  }
+
+  function onDocumentWheel(event: WheelEvent) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const step = applyWheelZoom(docZoom, event.deltaY, event.deltaMode, wheelRemainder);
+    wheelRemainder = step.remainder;
+    if (step.zoom === docZoom) return;
+    setDocZoom(step.zoom, { x: event.clientX, y: event.clientY });
+  }
+
+  /** Ctrl/Meta+wheel outside the document must not zoom the shell or the browser. */
+  function onBlockedZoomWheel(event: WheelEvent) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+  }
+
+  function onZoomKey(event: KeyboardEvent): boolean {
+    const command = zoomKeyCommand(event);
+    if (!command) return false;
+    event.preventDefault();
+    wheelRemainder = 0;
+    setDocZoom(zoomFromKey(docZoom, command));
+    return true;
+  }
+
+  function onPdfScale(scale: number) {
+    const next = clampDocZoom(scale);
+    if (next === docZoom) return;
+    docZoom = next;
+  }
+
   function endZoomScrub() {
     zoomScrub.pointerId = -1;
     zoomScrub.dragging = false;
     document.body.classList.remove('lhr-zoom-scrubbing');
-    window.removeEventListener('pointermove', onZoomScrubMove, true);
-    window.removeEventListener('pointerup', onZoomScrubUp, true);
-    window.removeEventListener('pointercancel', onZoomScrubUp, true);
   }
 
   function onZoomReadoutPointerDown(e: PointerEvent) {
     if (e.button !== 0) return;
+    const el = e.currentTarget;
+    if (!(el instanceof HTMLElement)) return;
     e.preventDefault();
     e.stopPropagation();
     zoomScrub.pointerId = e.pointerId;
-    zoomScrub.startX = e.clientX;
     zoomScrub.startY = e.clientY;
-    zoomScrub.startZoom = uiZoom;
+    zoomScrub.startZoom = docZoom;
     zoomScrub.dragging = false;
-    window.addEventListener('pointermove', onZoomScrubMove, true);
-    window.addEventListener('pointerup', onZoomScrubUp, true);
-    window.addEventListener('pointercancel', onZoomScrubUp, true);
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer can already be gone */
+    }
   }
 
-  function onZoomScrubMove(e: PointerEvent) {
+  function onZoomReadoutPointerMove(e: PointerEvent) {
     if (e.pointerId !== zoomScrub.pointerId) return;
-    const dx = e.clientX - zoomScrub.startX;
-    const dy = e.clientY - zoomScrub.startY;
-    if (!zoomScrub.dragging && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-    zoomScrub.dragging = true;
-    document.body.classList.add('lhr-zoom-scrubbing');
+    const next = zoomFromDrag(zoomScrub.startZoom, e.clientY - zoomScrub.startY);
+    if (next === null) return;
+    if (!zoomScrub.dragging) {
+      zoomScrub.dragging = true;
+      document.body.classList.add('lhr-zoom-scrubbing');
+    }
     e.preventDefault();
-    setUiZoom(zoomFromPointerScrub(zoomScrub.startZoom, dx, dy));
+    wheelRemainder = 0;
+    setDocZoom(next);
   }
 
-  function onZoomScrubUp(e: PointerEvent) {
-    if (e.pointerId !== zoomScrub.pointerId) return;
+  function onZoomReadoutPointerEnd(e: PointerEvent) {
+    if (zoomScrub.pointerId === -1 || e.pointerId !== zoomScrub.pointerId) return;
     endZoomScrub();
   }
 
-  function onZoomWheel(e: WheelEvent) {
-    if (!e.ctrlKey && !e.metaKey) return;
+  function onZoomReadoutDblClick(e: MouseEvent) {
     e.preventDefault();
-    setUiZoom(zoomFromWheelDelta(uiZoom, e.deltaY, e.deltaMode));
+    e.stopPropagation();
+    wheelRemainder = 0;
+    setDocZoom(zoomFromKey(docZoom, 'reset'));
   }
+
   let inWebview = $state(false);
 
   let menuOpen = $state(false);
@@ -699,7 +763,14 @@
 
   async function openDoc(doc: DocumentHit) {
     const key = docKey(doc);
-    if (loadedKey === key || openingKey === key) return;
+    const same =
+      Boolean(selected) && docKey(selected) === key && (loadedKey === key || openingKey === key);
+    // Clicking the open file again still counts as a user open: zoom returns to 100%.
+    // A refresh of that file (onIframeLoad) uses zoomAfterOpen('reload') and keeps it.
+    if (same) {
+      onUserOpenDocument();
+      return;
+    }
     openingKey = key;
     pageSummary = '';
     syncIndex = null;
@@ -717,6 +788,7 @@
     pageMarks = [];
     pageIndex = 0;
     listIndex = 0;
+    onUserOpenDocument();
     try {
       await api.patchSettings({ last_document: { root_id: doc.root_id, rel: doc.rel } });
     } catch {
@@ -1154,10 +1226,20 @@
     }
     iframeCopyCleanup?.();
     iframeCopyCleanup = null;
+    // New document content, not a user open. A click in the list already reset zoom.
+    if (!isPdfHit(selected)) onDocumentContentReload();
     scheduleDocFind(Boolean(listQuery.trim()), 'both');
     const doc = iframeDoc();
     const frame = iframeEl;
     if (!doc || !frame) return;
+    const onFrameWheel = (event: WheelEvent) => {
+      onDocumentWheel(event);
+    };
+    const onFrameKey = (event: KeyboardEvent) => {
+      onZoomKey(event);
+    };
+    doc.addEventListener('wheel', onFrameWheel, { capture: true, passive: false });
+    doc.addEventListener('keydown', onFrameKey, true);
     const handler = (event: MouseEvent) => {
       const text =
         selectedTextIn(doc.body ?? doc) || wordAtPoint(doc, event.clientX, event.clientY);
@@ -1217,6 +1299,8 @@
       },
     );
     iframeCopyCleanup = () => {
+      doc.removeEventListener('wheel', onFrameWheel, { capture: true });
+      doc.removeEventListener('keydown', onFrameKey, true);
       doc.removeEventListener('contextmenu', handler);
       doc.removeEventListener('click', onLink, true);
       detachIndex();
@@ -1299,23 +1383,7 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement | null;
-    const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-    if ((event.ctrlKey || event.metaKey) && (event.key === '=' || event.key === '+' || event.key === 'Add')) {
-      event.preventDefault();
-      setUiZoom(uiZoom * 1.12);
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && (event.key === '-' || event.key === '_' || event.key === 'Subtract')) {
-      event.preventDefault();
-      setUiZoom(uiZoom / 1.12);
-      return;
-    }
-    if ((event.ctrlKey || event.metaKey) && (event.key === '0' || event.key === 'Numpad0')) {
-      event.preventDefault();
-      setUiZoom(1);
-      return;
-    }
+    if (onZoomKey(event)) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && selected) {
       event.preventDefault();
       pageFindInput?.focus();
@@ -1496,7 +1564,7 @@
     window.addEventListener('keydown', onKeydown);
     window.addEventListener('click', onWindowClick);
     window.addEventListener('resize', onResize);
-    window.addEventListener('wheel', onZoomWheel, { passive: false });
+    window.addEventListener('wheel', onBlockedZoomWheel, { capture: true, passive: false });
     return () => {
       iframeCopyCleanup?.();
       stopWatch();
@@ -1506,7 +1574,7 @@
       window.removeEventListener('keydown', onKeydown);
       window.removeEventListener('click', onWindowClick);
       window.removeEventListener('resize', onResize);
-      window.removeEventListener('wheel', onZoomWheel);
+      window.removeEventListener('wheel', onBlockedZoomWheel, { capture: true });
     };
   });
 </script>
@@ -1633,14 +1701,14 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <span
       class="zoom-readout"
-      title="Drag to zoom. Double-click to reset to 100%"
+      title="Drag up or down to zoom the document. Double-click to reset to 100%."
       onpointerdown={onZoomReadoutPointerDown}
-      ondblclick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setUiZoom(1);
-      }}
-    >zoom {(uiZoom * 100).toFixed(0)}%</span>
+      onpointermove={onZoomReadoutPointerMove}
+      onpointerup={onZoomReadoutPointerEnd}
+      onpointercancel={onZoomReadoutPointerEnd}
+      onlostpointercapture={onZoomReadoutPointerEnd}
+      ondblclick={onZoomReadoutDblClick}
+    >{zoomReadout(docZoom)}</span>
     <div class="status">
       <span>v{version || '…'}</span>
       <span
@@ -1689,7 +1757,7 @@
     class="layout"
     class:dragging
     bind:this={layoutEl}
-    style={`grid-template-columns: ${sidebarWidth}px 6px minmax(0, 1fr); zoom: ${uiZoom}; width: ${100 / uiZoom}%; height: ${100 / uiZoom}%;`}
+    style={`grid-template-columns: ${sidebarWidth}px 6px minmax(0, 1fr);`}
   >
     <section class="pane sidebar">
       <div class="pane-head">
@@ -1949,6 +2017,10 @@
             <PdfViewer
               src={viewUrl(selected.root_id, selected.rel)}
               overlay={Boolean(heldHtml)}
+              scale={docZoom}
+              scaleOrigin={pdfOrigin}
+              onScale={onPdfScale}
+              onZoomWheel={onDocumentWheel}
               onReady={onPdfReady}
               onSettled={onPdfSettled}
               onPageProgress={onPdfPageProgress}

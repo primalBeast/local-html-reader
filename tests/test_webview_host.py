@@ -89,6 +89,17 @@ def test_f5_script_listens_for_f5():
     assert "toggle_fullscreen" in F5_RELOAD_JS
 
 
+def test_native_zoom_is_disabled():
+    src = inspect.getsource(webview_host.open_webview)
+    assert "zoomable=False" in src
+    host = inspect.getsource(webview_host._disable_native_zoom)
+    assert "IsZoomControlEnabled = False" in host
+    hook = inspect.getsource(webview_host._hook_native_zoom)
+    assert "CoreWebView2InitializationCompleted" in hook
+    resize = inspect.getsource(webview_host._enable_edge_resize)
+    assert "_hook_native_zoom" in resize
+
+
 def test_open_webview_uses_app_icon_and_closes_splash():
     src = inspect.getsource(webview_host.open_webview)
     assert "icon_path" in src

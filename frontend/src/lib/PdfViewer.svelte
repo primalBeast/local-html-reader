@@ -6,6 +6,7 @@
   import type { PDFDocumentProxy } from 'pdfjs-dist';
   import { indexMarkY } from './sideIndex';
   import { buildToc, destTop, topFraction, readingKeyFromPages, type OutlineNode, type TocRow } from './pdfOutline';
+  import { pdfWheelOrigin, type PdfScaleOrigin } from './docZoom';
 
   const TEXT_LAYER = 1;
   const ANNOTATIONS = 1;
@@ -22,6 +23,10 @@
   let {
     src,
     overlay = false,
+    scale = 1,
+    scaleOrigin = null,
+    onScale,
+    onZoomWheel,
     onReady,
     onSettled,
     onPageProgress,
@@ -30,6 +35,11 @@
   }: {
     src: string;
     overlay?: boolean;
+    /** Shared document zoom. 1 is actual size. */
+    scale?: number;
+    scaleOrigin?: PdfScaleOrigin | null;
+    onScale?: (scale: number) => void;
+    onZoomWheel?: (event: WheelEvent) => void;
     onReady?: (root: HTMLElement) => void;
     onSettled?: (src: string) => void;
     onPageProgress?: (loaded: number, total: number, src: string) => void;
@@ -61,6 +71,64 @@
 
   let loadUrl: (url: string) => Promise<void> = async () => {};
   let gotoDest: ((dest: string | unknown[]) => void) | null = null;
+  let pdfViewerRef: PDFViewer | null = null;
+  /** True only after pagesinit, so a load does not scale the previous document. */
+  let pdfScaleLive = $state(false);
+  /** Set while pagesinit applies the scale, so the effect does not apply it twice. */
+  let suspendScaleEffect = false;
+  let appliedOriginId = -1;
+  let reportAlive = true;
+  /** Latest prop values. pagesinit runs inside onMount and must not close over the first scale. */
+  let latestScale = 1;
+  let latestOrigin: PdfScaleOrigin | null = null;
+
+  function reportScale(value: number) {
+    queueMicrotask(() => {
+      if (!reportAlive || !Number.isFinite(value)) return;
+      onScale?.(value);
+    });
+  }
+
+  function applyExternalScale(view: PDFViewer, next: number, origin: PdfScaleOrigin | null, fresh: boolean) {
+    if (!view.pdfDocument || !Number.isFinite(next)) return;
+    if (fresh) {
+      // A new document takes the current docZoom. Ignore a gesture origin from the load.
+      if (origin) appliedOriginId = origin.id;
+      view.currentScale = next;
+      reportScale(view.currentScale);
+      return;
+    }
+    if (origin && origin.id !== appliedOriginId) {
+      appliedOriginId = origin.id;
+      const current = view.currentScale > 0 ? view.currentScale : 1;
+      const factor = next / current;
+      if (Number.isFinite(factor) && Math.abs(factor - 1) > 1e-4) {
+        const box = view.container.getBoundingClientRect();
+        view.updateScale({
+          scaleFactor: factor,
+          drawingDelay: 200,
+          origin: pdfWheelOrigin(
+            origin.x,
+            origin.y,
+            box,
+            { left: view.container.offsetLeft, top: view.container.offsetTop },
+          ),
+        });
+      }
+    } else if (Math.abs((view.currentScale || 1) - next) > 0.001) {
+      view.currentScale = next;
+    }
+    reportScale(view.currentScale);
+  }
+
+  $effect(() => {
+    latestScale = scale;
+    latestOrigin = scaleOrigin ?? null;
+    const live = pdfScaleLive;
+    const view = pdfViewerRef;
+    if (suspendScaleEffect || !live || !view?.pdfDocument) return;
+    applyExternalScale(view, latestScale, latestOrigin, false);
+  });
   let tocItems: TocRow[] = [];
 
   function setToc(items: TocRow[]) {
@@ -192,8 +260,6 @@
     let cancelled = false;
     let activeUrl = '';
     let loadGen = 0;
-    let userHasZoomed = false;
-    let userScale = 1;
     let findReady = false;
     const findQueue: Array<() => void> = [];
     const saved = new Map<PdfFindLayer, { query: string; flags: PdfFindFlags }>();
@@ -315,17 +381,24 @@
         onFindEvent(evt);
       });
       bus.on('pagesinit', () => {
-        if (!pdfViewer) return;
-        if (userHasZoomed) pdfViewer.currentScale = userScale;
-        else pdfViewer.currentScaleValue = 'page-fit';
+        // Apply docZoom now. A user open resets it before load; a reload of
+        // this PDF leaves it alone. Actual size when that value is 1.
+        suspendScaleEffect = true;
+        pdfScaleLive = true;
+        if (pdfViewer) applyExternalScale(pdfViewer, latestScale, latestOrigin, true);
+        suspendScaleEffect = false;
         placeTocLine();
       });
-      bus.on('scalechanging', () => placeTocLine());
+      bus.on('scalechanging', (evt: { scale?: number }) => {
+        placeTocLine();
+        if (typeof evt?.scale === 'number') reportScale(evt.scale);
+      });
       FindStatePending = viewer.FindState.PENDING;
       eventBus = bus;
       linkService = links;
       findController = finder;
       pdfViewer = view;
+      pdfViewerRef = view;
       gotoDest = (dest) => {
         void links.goToDestination(dest);
       };
@@ -416,7 +489,6 @@
         );
         if (cancelled || gen !== loadGen || url !== activeUrl) return;
         setToc(rows);
-        if (!userHasZoomed && pdfViewer) pdfViewer.currentScaleValue = 'page-fit';
         requestAnimationFrame(() => placeTocLine());
       } catch {
         if (!cancelled && gen === loadGen) setToc([]);
@@ -424,6 +496,7 @@
     }
 
     loadUrl = async (url: string) => {
+      pdfScaleLive = false;
       activeUrl = url;
       const gen = ++loadGen;
       error = null;
@@ -487,45 +560,23 @@
 
     function onWheel(event: WheelEvent) {
       if (tocEl && event.target instanceof Node && tocEl.contains(event.target)) return;
-      if ((!event.ctrlKey && !event.metaKey) || !pdfViewer?.pdfDocument) return;
+      if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
-      let dy = event.deltaY;
-      if (event.deltaMode === 1) dy *= 16;
-      else if (event.deltaMode === 2) dy *= 400;
-      const factor = Math.exp(-dy * 0.0015);
-      if (!Number.isFinite(factor) || Math.abs(factor - 1) < 0.001) return;
-      userHasZoomed = true;
-      pdfViewer.updateScale({
-        scaleFactor: factor,
-        drawingDelay: 200,
-        origin: [event.clientX, event.clientY],
-      });
-      userScale = pdfViewer.currentScale;
+      onZoomWheel?.(event);
     }
 
-    let resizeTimer = 0;
-    const ro = new ResizeObserver(() => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(() => {
-        if (!pdfViewer?.pdfDocument || userHasZoomed) return;
-        pdfViewer.currentScaleValue = 'page-fit';
-      }, 80);
-    });
-    if (frame) {
-      ro.observe(frame);
-      frame.addEventListener('wheel', onWheel, { passive: false });
-    }
-    if (scroller) ro.observe(scroller);
+    if (frame) frame.addEventListener('wheel', onWheel, { passive: false });
     const onPdfScroll = () => placeTocLine();
     scroller?.addEventListener('scroll', onPdfScroll, { passive: true });
     viewerReady = true;
 
     return () => {
       cancelled = true;
+      reportAlive = false;
       loadGen += 1;
       gotoDest = null;
-      window.clearTimeout(resizeTimer);
-      ro.disconnect();
+      pdfViewerRef = null;
+      pdfScaleLive = false;
       frame?.removeEventListener('wheel', onWheel);
       scroller?.removeEventListener('scroll', onPdfScroll);
       try {

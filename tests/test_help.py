@@ -49,6 +49,7 @@ def test_help_lists_every_supported_extension_once() -> None:
     text += " ".join(item["detail"] for item in body["shared"])
     for phrase in ("512 MB", "32,000", "6,000,000", "16,000 rows", "240 columns", "128 MB", "32 MB", "80 times"):
         assert phrase in text
+    assert "only that document" in text
     assert ".doc" in body["skipped"]
 
 
@@ -62,6 +63,22 @@ def test_pdf_viewer_is_not_capped_at_200_pages() -> None:
     assert "countLoadedPages" in src
     app = Path("frontend/src/App.svelte").read_text(encoding="utf-8")
     assert "formatPageLoad" in app
+
+
+def test_document_zoom_is_document_only() -> None:
+    app = Path("frontend/src/App.svelte").read_text(encoding="utf-8")
+    pdf = Path("frontend/src/lib/PdfViewer.svelte").read_text(encoding="utf-8")
+    assert "lhr-ui-zoom" not in app
+    assert "zoom: ${" not in app
+    assert "zoomAfterOpen('user'" in app
+    assert "zoomAfterOpen('reload'" in app
+    assert "setPointerCapture" in app
+    assert "page-fit" not in pdf
+    assert "userHasZoomed" not in pdf
+    assert "currentScale" in pdf
+    assert "onZoomWheel" in pdf
+    text = " ".join(item["detail"] for item in help_document()["shared"])
+    assert "only that document" in text
 
 
 def test_frontend_find_cap_matches() -> None:

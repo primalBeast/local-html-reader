@@ -68,6 +68,16 @@ def help_document() -> dict:
                 "label": "Search hits",
                 "detail": f"The file list and Find in page both stop at {hits} hits.",
             },
+            {
+                "label": "Zoom",
+                "detail": (
+                    "Ctrl+scroll over the open document, Ctrl+plus, Ctrl+minus, and dragging "
+                    "the zoom percent change only that document, from 50% to 200%. "
+                    "The title bar and the file list stay the same size. "
+                    "Ctrl+0 or a double-click on the percent returns to 100%. "
+                    "Opening a document starts at 100%."
+                ),
+            },
         ],
         "formats": [
             {

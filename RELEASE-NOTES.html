@@ -113,6 +113,20 @@
 
       <article>
         <div class="row">
+          <h2>Zoom only the open document</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>Zoom now changes only the document in the right pane, for HTML pages and PDFs. The title bar and the file list stay the same size.</li>
+          <li>Ctrl+wheel zooms only when the pointer is over the document, and keeps the spot under the pointer in place. Over the title bar or the file list it does nothing, and the WebView2 window's own page zoom is turned off.</li>
+          <li>Every way of zooming uses the same 10% step: one wheel notch, Ctrl + and Ctrl -. Ctrl 0 and double-clicking the zoom % go back to 100%. Dragging the zoom % up or down changes it by 1% per 2 pixels, even when the pointer passes over the document.</li>
+          <li>The zoom % always shows the document's real zoom. Opening a document starts it at 100%, and PDFs open at actual size.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>No more black WebView2 window</h2>
           <span class="chip">0fe61b7</span>
           <span class="date">2026-11-18</span>
