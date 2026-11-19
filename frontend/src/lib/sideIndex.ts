@@ -92,6 +92,37 @@ function targetTop(el: Element): number | null {
 
 export type IndexLine = { top: number; left: number; width: number };
 
+/**
+ * Visual pixels (getBoundingClientRect, after CSS zoom) → this element's CSS
+ * pixels (scrollTop). Scale is visualHeight / cssHeight. A non-finite or
+ * non-positive size uses scale 1, so the visual delta is returned unchanged.
+ */
+export function cssPixelsFromVisual(
+  visualDelta: number,
+  visualHeight: number,
+  cssHeight: number,
+): number {
+  if (!Number.isFinite(visualDelta)) return visualDelta;
+  if (!Number.isFinite(visualHeight) || visualHeight <= 0) return visualDelta;
+  if (!Number.isFinite(cssHeight) || cssHeight <= 0) return visualDelta;
+  return visualDelta / (visualHeight / cssHeight);
+}
+
+/**
+ * Visual Y of the center of a scroller's border box that lies in the viewport.
+ * visibleTop = max(paneTop, 0), visibleBottom = min(paneBottom, viewH).
+ * A slice shorter than 4px falls back to the box center (top + height / 2).
+ */
+export function visiblePaneCenter(
+  pane: { top: number; height: number; bottom: number },
+  viewH: number,
+): number {
+  const visibleTop = Math.max(pane.top, 0);
+  const visibleBottom = Math.min(pane.bottom, viewH);
+  if (visibleBottom - visibleTop < 4) return pane.top + pane.height / 2;
+  return (visibleTop + visibleBottom) / 2;
+}
+
 /** Draw the midpoint line. Calls onSync with a function that scrolls the index to that line. */
 export function attachSideIndex(
   doc: Document,
@@ -175,10 +206,13 @@ export function attachSideIndex(
           const before = node.scrollTop;
           const linkBox = closest.getBoundingClientRect();
           const paneBox = node.getBoundingClientRect();
-          const delta = linkBox.top + linkBox.height / 2 - (paneBox.top + paneBox.height / 2);
+          const viewH = view.innerHeight || doc.documentElement.clientHeight;
+          const delta = linkBox.top + linkBox.height / 2 - visiblePaneCenter(paneBox, viewH);
+          // delta is visual pixels. The 2px and 1px gates stay in those pixels.
           if (Math.abs(delta) > 2) {
-            node.scrollTop = before + delta;
-            if (Math.abs(node.scrollTop - before) > 1) return;
+            node.scrollTop = before + cssPixelsFromVisual(delta, paneBox.height, node.offsetHeight);
+            const oneVisual = cssPixelsFromVisual(1, paneBox.height, node.offsetHeight);
+            if (Math.abs(node.scrollTop - before) > oneVisual) return;
           }
         }
         node = node.parentElement;
