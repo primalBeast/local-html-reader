@@ -5,25 +5,32 @@
   import PathContextMenu from './lib/PathContextMenu.svelte';
   import ProjectContextMenu from './lib/ProjectContextMenu.svelte';
   import { api, historyFromUnknown, searchFlagsFromUnknown, setApiProject, viewUrl, windowsFullPath, windowsRelPath, type DocumentHit, type Project, type Root, type SearchHistoryItem, type SearchWorker, type Settings, type TreeNode } from './lib/api';
-  import PdfViewer, { type PdfFindApi, type PdfFindLayer } from './lib/PdfViewer.svelte';
+  import PdfViewer, { type PdfFindApi, type PdfFindLayer, type PdfZoomAnchor } from './lib/PdfViewer.svelte';
   import CopyPopup from './lib/CopyPopup.svelte';
   import { applyFinds, reveal } from './lib/pageFind';
   import HelpDialog from './lib/HelpDialog.svelte';
   import { copyImageToClipboard, copyToClipboard, selectedTextIn, wordAtPoint } from './lib/wordAtPoint';
   import { hashForSameFile, revealHash } from './lib/inPageLink';
-  import { attachSideIndex } from './lib/sideIndex';
+  import { attachSideIndex, type ContentsZoomAnchor, type SideIndexController } from './lib/sideIndex';
   import { focusFirstMenuItem, onMenuKeydown } from './lib/menuKeys';
   import {
     applyWheelZoom,
-    scrollAfterZoom,
+    axisCanScroll,
+    correctScrollByVisual,
+    pageFraction,
+    pageFractionVisualDelta,
+    paneCentre,
+    sameZoomSession,
     zoomAfterOpen,
+    zoomAnchorSettled,
     zoomFromDrag,
     zoomFromKey,
     zoomKeyCommand,
     zoomReadout,
     clampDocZoom,
-    type DocZoomAnchor,
-    type PdfScaleOrigin,
+    ZOOM_ANCHOR_ITERS,
+    type ZoomSessionPositions,
+    type ZoomSessionSnapshot,
   } from './lib/docZoom';
 
   let roots = $state<Root[]>([]);
@@ -60,8 +67,6 @@
   let docZoom = $state(1);
   /** Fraction of a percent dropped by the integer snap, so trackpad ticks add up. */
   let wheelRemainder = 0;
-  let pdfOrigin = $state<PdfScaleOrigin | null>(null);
-  let pdfOriginSeq = 0;
 
   const zoomScrub = {
     pointerId: -1,
@@ -70,43 +75,344 @@
     dragging: false,
   };
 
-  function setDocZoom(value: number, anchor: DocZoomAnchor | null = null) {
+  function setDocZoom(value: number) {
     docZoom = clampDocZoom(value);
-    if (selected && isPdfHit(selected)) {
-      if (anchor) pdfOrigin = { x: anchor.x, y: anchor.y, id: ++pdfOriginSeq };
-      else pdfOrigin = null;
-      return;
-    }
-    applyHtmlZoom(anchor);
+    if (selected && isPdfHit(selected)) return;
+    applyHtmlZoom();
   }
 
-  function applyHtmlZoom(anchor: DocZoomAnchor | null) {
+  /**
+   * One zoom gesture. Anchors stay until the document changes or something
+   * scrolls by more than a pixel, so a clamped step and tiny drag steps
+   * still land back on the same content point.
+   */
+  type ZoomSession = {
+    snapshot: ZoomSessionSnapshot;
+    html: HtmlZoomAnchor | null;
+    contents: ContentsZoomAnchor | null;
+    pdf: PdfZoomAnchor | null;
+  };
+
+  let zoomSession: ZoomSession | null = null;
+
+  type HtmlAnchorBox = { left: number; top: number; width: number; height: number };
+
+  /** One character when `character` is set, otherwise the element box. Fractions are of that box. */
+  type HtmlZoomAnchor = {
+    node: Node;
+    offset: number;
+    character: boolean;
+    fx: number;
+    fy: number;
+    targetX: number;
+    targetY: number;
+  };
+
+  /**
+   * Zoom the HTML document about the centre of the iframe's visible area.
+   * The anchor is a fraction of a one-character box (or the element box).
+   * getBoundingClientRect is visual pixels. scrollTop is not assumed: a probe
+   * measures visual pixels per scroll unit. The contents hold runs in the
+   * same turn and redraws the blue line once, after both corrections.
+   */
+  function applyHtmlZoom() {
     const doc = iframeDoc();
     const root = doc?.documentElement;
-    if (!doc || !root) return;
-    const scrolling = (doc.scrollingElement ?? root) as HTMLElement;
-    const styled = Number.parseFloat(root.style.getPropertyValue('zoom'));
-    const oldZoom = Number.isFinite(styled) && styled > 0 ? styled : 1;
-    const nextScroll = scrollAfterZoom({
-      scrollLeft: scrolling.scrollLeft,
-      scrollTop: scrolling.scrollTop,
-      oldZoom,
-      newZoom: docZoom,
-      anchor,
-    });
-    root.style.setProperty('zoom', String(docZoom));
-    scrolling.scrollLeft = nextScroll.scrollLeft;
-    scrolling.scrollTop = nextScroll.scrollTop;
+    if (!doc || !root || !selected || isPdfHit(selected)) return;
+    const now = htmlZoomSnapshot();
+    const reuse = sameZoomSession(zoomSession?.snapshot, now) ? zoomSession : null;
+    const contentsReuse = reuse?.contents?.link.isConnected ? reuse.contents : null;
+    const heldHtmlAnchor = reuse?.html ?? null;
+    const hold = sideIndexCtl?.beginZoom(contentsReuse) ?? null;
+    let anchor: HtmlZoomAnchor | null = null;
+    try {
+      anchor = htmlAnchorLive(doc, heldHtmlAnchor)
+        ? heldHtmlAnchor
+        : captureHtmlAnchor(doc, sideIndexCtl?.contentsElement() ?? null);
+      root.style.setProperty('zoom', String(docZoom));
+      if (anchor) settleHtmlAnchor(doc, anchor);
+    } finally {
+      const ended = sideIndexCtl?.endZoom(hold) ?? { anchor: null, scrollTop: null };
+      commitHtmlZoomSession(anchor, ended.anchor);
+    }
+  }
+
+  /** Visible centre, excluding scrollbars. clientWidth/clientHeight are visual pixels. */
+  function iframePaneCentre(doc: Document): { x: number; y: number } | null {
+    const view = doc.defaultView;
+    if (!view) return null;
+    const root = doc.documentElement;
+    const width = root.clientWidth > 0 ? root.clientWidth : view.innerWidth;
+    const height = root.clientHeight > 0 ? root.clientHeight : view.innerHeight;
+    if (width <= 0 || height <= 0) return null;
+    return paneCentre(width, height);
+  }
+
+  function inIframeView(view: Window, x: number, y: number): boolean {
+    return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x < view.innerWidth && y < view.innerHeight;
+  }
+
+  function elementOfNode(node: Node | null): Element | null {
+    if (!node) return null;
+    return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  }
+
+  function blockedZoomAnchor(el: Element | null, doc: Document, index: HTMLElement | null): boolean {
+    if (!el) return true;
+    if (index?.contains(el)) return true;
+    if (el.closest('[data-lhr-index-ui]')) return true;
+    const view = doc.defaultView;
+    if (!view) return true;
+    let node: Element | null = el;
+    while (node && node !== doc.documentElement) {
+      const pos = view.getComputedStyle(node).position;
+      if (pos === 'fixed' || pos === 'sticky') return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function caretRangeAt(doc: Document, x: number, y: number): Range | null {
+    try {
+      const range = doc.caretRangeFromPoint(x, y);
+      if (range) return range;
+    } catch {
+      /* fall through to caretPositionFromPoint */
+    }
+    try {
+      const pos = doc.caretPositionFromPoint(x, y);
+      if (!pos) return null;
+      const range = doc.createRange();
+      range.setStart(pos.offsetNode, pos.offset);
+      range.collapse(true);
+      return range;
+    } catch {
+      return null;
+    }
+  }
+
+  function usableBox(rect: { left: number; top: number; width: number; height: number } | null): HtmlAnchorBox | null {
+    if (!rect) return null;
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return null;
+    if (!(rect.width > 0) && !(rect.height > 0)) return null;
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }
+
+  /** One character at `offset`. A zero width cannot correct horizontal scroll. */
+  function characterBox(doc: Document, node: Node, offset: number): HtmlAnchorBox | null {
+    if (node.nodeType !== Node.TEXT_NODE || !node.isConnected) return null;
+    const text = node.textContent ?? '';
+    const at = Math.max(0, Math.min(offset, text.length));
+    const range = doc.createRange();
+    try {
+      if (at < text.length) {
+        range.setStart(node, at);
+        range.setEnd(node, at + 1);
+      } else if (at > 0) {
+        range.setStart(node, at - 1);
+        range.setEnd(node, at);
+      } else {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    const box = usableBox(range.getBoundingClientRect());
+    if (!box || !(box.width > 0)) return null;
+    return box;
+  }
+
+  function readHtmlAnchorBox(doc: Document, anchor: HtmlZoomAnchor): HtmlAnchorBox | null {
+    if (!anchor.node.isConnected || anchor.node.ownerDocument !== doc) return null;
+    if (anchor.character) return characterBox(doc, anchor.node, anchor.offset);
+    return usableBox(elementOfNode(anchor.node)?.getBoundingClientRect() ?? null);
+  }
+
+  function htmlAnchorLive(doc: Document, anchor: HtmlZoomAnchor | null | undefined): anchor is HtmlZoomAnchor {
+    return Boolean(anchor && anchor.node.isConnected && anchor.node.ownerDocument === doc);
+  }
+
+  /**
+   * Node under a hit-test point. Fractions are taken later against the pane
+   * centre, which may sit outside this box when the centre is over the contents.
+   */
+  function pickHtmlNode(
+    doc: Document,
+    x: number,
+    y: number,
+    index: HTMLElement | null,
+  ): { node: Node; offset: number; character: boolean } | null {
+    const view = doc.defaultView;
+    if (!view || !inIframeView(view, x, y)) return null;
+    const range = caretRangeAt(doc, x, y);
+    if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+      const el = elementOfNode(range.startContainer);
+      if (!blockedZoomAnchor(el, doc, index) && characterBox(doc, range.startContainer, range.startOffset)) {
+        return { node: range.startContainer, offset: range.startOffset, character: true };
+      }
+    }
+    const hit = doc.elementFromPoint(x, y);
+    if (hit && hit !== doc.documentElement && hit !== doc.body && !blockedZoomAnchor(hit, doc, index)) {
+      if (usableBox(hit.getBoundingClientRect())) return { node: hit, offset: 0, character: false };
+    }
+    return null;
+  }
+
+  function anchorFromPick(
+    doc: Document,
+    picked: { node: Node; offset: number; character: boolean },
+    centre: { x: number; y: number },
+  ): HtmlZoomAnchor | null {
+    const draft: HtmlZoomAnchor = { ...picked, fx: 0, fy: 0, targetX: centre.x, targetY: centre.y };
+    const box = readHtmlAnchorBox(doc, draft);
+    if (!box) return null;
+    // Fraction of the box, not the corner. A full-width block's left edge
+    // stays at -scrollLeft, so a corner error never corrects X.
+    return {
+      ...draft,
+      fx: pageFraction(centre.x, box.left, box.width),
+      fy: pageFraction(centre.y, box.top, box.height),
+    };
+  }
+
+  function captureHtmlAnchor(doc: Document, index: HTMLElement | null): HtmlZoomAnchor | null {
+    const view = doc.defaultView;
+    const centre = iframePaneCentre(doc);
+    if (!view || !centre) return null;
+    let picked = pickHtmlNode(doc, centre.x, centre.y, index);
+    if (!picked && index) {
+      const pane = index.getBoundingClientRect();
+      picked = pickHtmlNode(doc, pane.right + 12, centre.y, index);
+    }
+    if (!picked && doc.body && !blockedZoomAnchor(doc.body, doc, index)) {
+      picked = { node: doc.body, offset: 0, character: false };
+    }
+    if (!picked) return null;
+    return anchorFromPick(doc, picked, centre);
+  }
+
+  function settleHtmlAnchor(doc: Document, anchor: HtmlZoomAnchor) {
+    const scrolling = (doc.scrollingElement ?? doc.documentElement) as HTMLElement;
+    for (let i = 0; i < ZOOM_ANCHOR_ITERS; i++) {
+      const box = readHtmlAnchorBox(doc, anchor);
+      if (!box) return;
+      const errorX = pageFractionVisualDelta(anchor.fx, box.left, box.width, anchor.targetX);
+      const errorY = pageFractionVisualDelta(anchor.fy, box.top, box.height, anchor.targetY);
+      const needX = axisCanScroll(scrolling.scrollLeft, scrolling.scrollWidth, scrolling.clientWidth) && !zoomAnchorSettled(errorX);
+      const needY = axisCanScroll(scrolling.scrollTop, scrolling.scrollHeight, scrolling.clientHeight) && !zoomAnchorSettled(errorY);
+      if (!needX && !needY) return;
+      let moved = false;
+      if (needY) {
+        moved =
+          correctScrollByVisual(
+            errorY,
+            () => scrolling.scrollTop,
+            (value) => {
+              scrolling.scrollTop = value;
+            },
+            () => {
+              const next = readHtmlAnchorBox(doc, anchor);
+              return next ? next.top + anchor.fy * next.height : null;
+            },
+          ) || moved;
+      }
+      if (needX) {
+        const again = readHtmlAnchorBox(doc, anchor);
+        const errorXNow = again ? pageFractionVisualDelta(anchor.fx, again.left, again.width, anchor.targetX) : 0;
+        if (
+          again &&
+          axisCanScroll(scrolling.scrollLeft, scrolling.scrollWidth, scrolling.clientWidth) &&
+          !zoomAnchorSettled(errorXNow)
+        ) {
+          moved =
+            correctScrollByVisual(
+              errorXNow,
+              () => scrolling.scrollLeft,
+              (value) => {
+                scrolling.scrollLeft = value;
+              },
+              () => {
+                const next = readHtmlAnchorBox(doc, anchor);
+                return next ? next.left + anchor.fx * next.width : null;
+              },
+            ) || moved;
+        }
+      }
+      if (!moved) return;
+    }
+  }
+
+  function documentZoomId(): string {
+    return selected ? docKey(selected) : '';
+  }
+
+  function readZoomScroll(pdf: { top: number; left: number } | null): ZoomSessionPositions {
+    if (selected && isPdfHit(selected)) {
+      return {
+        documentTop: null,
+        documentLeft: null,
+        contentsTop: null,
+        pdfTop: pdf ? pdf.top : null,
+        pdfLeft: pdf ? pdf.left : null,
+      };
+    }
+    const doc = iframeDoc();
+    const scrolling = (doc?.scrollingElement ?? doc?.documentElement) as HTMLElement | null;
+    if (!doc || !scrolling) {
+      return { documentTop: null, documentLeft: null, contentsTop: null, pdfTop: null, pdfLeft: null };
+    }
+    return {
+      documentTop: scrolling.scrollTop,
+      documentLeft: scrolling.scrollLeft,
+      contentsTop: sideIndexCtl?.contentsScrollTop() ?? null,
+      pdfTop: null,
+      pdfLeft: null,
+    };
+  }
+
+  function htmlZoomSnapshot(): ZoomSessionSnapshot {
+    return { id: documentZoomId(), scroll: readZoomScroll(null) };
+  }
+
+  function commitHtmlZoomSession(html: HtmlZoomAnchor | null, contents: ContentsZoomAnchor | null) {
+    const id = documentZoomId();
+    if (!id || !selected || isPdfHit(selected)) return;
+    zoomSession = { snapshot: { id, scroll: readZoomScroll(null) }, html, contents, pdf: null };
+  }
+
+  function reusePdfZoom(top: number, left: number): PdfZoomAnchor | null {
+    const id = documentZoomId();
+    const pdf = zoomSession?.pdf;
+    if (!id || !pdf) return null;
+    const now: ZoomSessionSnapshot = { id, scroll: readZoomScroll({ top, left }) };
+    if (!sameZoomSession(zoomSession?.snapshot, now)) return null;
+    return pdf;
+  }
+
+  function commitPdfZoom(anchor: PdfZoomAnchor | null, top: number, left: number) {
+    const id = documentZoomId();
+    if (!anchor || !id) {
+      zoomSession = null;
+      return;
+    }
+    zoomSession = {
+      snapshot: { id, scroll: readZoomScroll({ top, left }) },
+      html: null,
+      contents: null,
+      pdf: anchor,
+    };
   }
 
   /** List, tree, or search — including the document that is already open. */
   function onUserOpenDocument() {
     wheelRemainder = 0;
+    zoomSession = null;
     setDocZoom(zoomAfterOpen('user', docZoom));
   }
 
-  /** Same document loaded again (iframe refresh). Does not reset zoom. */
+  /** Same document loaded again (iframe refresh). Does not reset zoom. Drops the zoom anchors. */
   function onDocumentContentReload() {
+    zoomSession = null;
     setDocZoom(zoomAfterOpen('reload', docZoom));
   }
 
@@ -116,7 +422,7 @@
     const step = applyWheelZoom(docZoom, event.deltaY, event.deltaMode, wheelRemainder);
     wheelRemainder = step.remainder;
     if (step.zoom === docZoom) return;
-    setDocZoom(step.zoom, { x: event.clientX, y: event.clientY });
+    setDocZoom(step.zoom);
   }
 
   /** Ctrl/Meta+wheel outside the document must not zoom the shell or the browser. */
@@ -211,6 +517,7 @@
   let iframeEl = $state<HTMLIFrameElement | null>(null);
   let indexLineEl = $state<HTMLDivElement | null>(null);
   let syncIndex = $state<(() => void) | null>(null);
+  let sideIndexCtl: SideIndexController | null = null;
   let showSyncContents = $state(false);
   let pdfRootEl = $state<HTMLElement | null>(null);
   let heldHtml = $state<DocumentHit | null>(null);
@@ -1278,7 +1585,7 @@
       revealHash(doc, hash);
     };
     doc.addEventListener('click', onLink, true);
-    const detachIndex = attachSideIndex(
+    const indexCtl = attachSideIndex(
       doc,
       frame.dataset.pageUrl || '',
       (sync) => {
@@ -1298,12 +1605,14 @@
         el.style.width = `${box.width}px`;
       },
     );
+    sideIndexCtl = indexCtl;
     iframeCopyCleanup = () => {
       doc.removeEventListener('wheel', onFrameWheel, { capture: true });
       doc.removeEventListener('keydown', onFrameKey, true);
       doc.removeEventListener('contextmenu', handler);
       doc.removeEventListener('click', onLink, true);
-      detachIndex();
+      indexCtl.destroy();
+      if (sideIndexCtl === indexCtl) sideIndexCtl = null;
       syncIndex = null;
       if (indexLineEl) indexLineEl.style.display = 'none';
     };
@@ -2018,9 +2327,10 @@
               src={viewUrl(selected.root_id, selected.rel)}
               overlay={Boolean(heldHtml)}
               scale={docZoom}
-              scaleOrigin={pdfOrigin}
               onScale={onPdfScale}
               onZoomWheel={onDocumentWheel}
+              reusePdfZoom={reusePdfZoom}
+              commitPdfZoom={commitPdfZoom}
               onReady={onPdfReady}
               onSettled={onPdfSettled}
               onPageProgress={onPdfPageProgress}

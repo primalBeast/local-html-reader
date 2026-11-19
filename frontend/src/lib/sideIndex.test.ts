@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { cssPixelsFromVisual, indexMarkY, visiblePaneCenter } from './sideIndex';
+import {
+  clampContentsTarget,
+  contentsHoldY,
+  contentsLineHold,
+  contentsLinkError,
+  cssPixelsFromVisual,
+  indexMarkY,
+  visiblePaneCenter,
+} from './sideIndex';
 
 describe('indexMarkY', () => {
   const marks = [
@@ -85,5 +93,62 @@ describe('visiblePaneCenter', () => {
   it('falls back to the box center when the visible slice is under 4px', () => {
     expect(visiblePaneCenter({ top: -20, height: 23, bottom: 3 }, 500)).toBe(-8.5);
     expect(visiblePaneCenter({ top: 900, height: 200, bottom: 1100 }, 800)).toBe(1000);
+  });
+});
+
+describe('contentsLineHold', () => {
+  it('keeps the unclamped line when it lies in the visible contents', () => {
+    expect(contentsLineHold(240, 80, 560)).toBe(240);
+    expect(contentsLineHold(80, 80, 560)).toBe(80);
+    expect(contentsLineHold(560, 80, 560)).toBe(560);
+  });
+
+  it('returns null when the line is missing or outside, so the link anchor is used', () => {
+    expect(contentsLineHold(40, 80, 560)).toBeNull();
+    expect(contentsLineHold(600, 80, 560)).toBeNull();
+    expect(contentsLineHold(null, 80, 560)).toBeNull();
+    expect(contentsLineHold(Number.NaN, 80, 560)).toBeNull();
+    expect(contentsLineHold(180, 400, 100)).toBeNull();
+    expect(contentsLineHold(40, Number.NaN, 300)).toBeNull();
+  });
+});
+
+describe('contentsHoldY', () => {
+  it('keeps the blue line when it is inside the visible contents', () => {
+    expect(contentsHoldY(240, 80, 560, 320)).toBe(240);
+    expect(contentsHoldY(80, 80, 560, 320)).toBe(80);
+    expect(contentsHoldY(560, 80, 560, 320)).toBe(560);
+  });
+
+  it('uses the visible centre when the line is outside or missing', () => {
+    expect(contentsHoldY(40, 80, 560, 320)).toBe(320);
+    expect(contentsHoldY(600, 80, 560, 320)).toBe(320);
+    expect(contentsHoldY(null, 80, 560, 320)).toBe(320);
+    expect(contentsHoldY(Number.NaN, 80, 560, 320)).toBe(320);
+  });
+});
+
+describe('contentsLinkError', () => {
+  it('is how far the link drifted from the held offset', () => {
+    expect(contentsLinkError(310, 300, 10)).toBe(0);
+    expect(contentsLinkError(340, 300, 10)).toBe(30);
+    expect(contentsLinkError(Number.NaN, 300, 10)).toBe(0);
+  });
+});
+
+describe('clampContentsTarget', () => {
+  it('keeps a target inside the visible contents and clamps one that zoom pushed outside', () => {
+    expect(clampContentsTarget(240, 80, 560)).toBe(240);
+    expect(clampContentsTarget(80, 80, 560)).toBe(80);
+    expect(clampContentsTarget(560, 80, 560)).toBe(560);
+    // 50% CSS zoom: a sticky 100vh pane is only half the viewport, so the old screen Y sits below it.
+    expect(clampContentsTarget(500, 0, 300)).toBe(300);
+    expect(clampContentsTarget(-20, 0, 300)).toBe(0);
+  });
+
+  it('leaves the target alone when the span cannot be used', () => {
+    expect(clampContentsTarget(180, 400, 100)).toBe(180);
+    expect(clampContentsTarget(Number.NaN, 0, 300)).toBeNaN();
+    expect(clampContentsTarget(40, Number.NaN, 300)).toBe(40);
   });
 });

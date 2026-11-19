@@ -1,3 +1,4 @@
+import { correctScrollByVisual, pageFraction, zoomAnchorSettled, ZOOM_ANCHOR_ITERS } from './docZoom';
 import { hashForSameFile } from './inPageLink';
 
 export type IndexMark = { content: number; index: number };
@@ -123,17 +124,166 @@ export function visiblePaneCenter(
   return (visibleTop + visibleBottom) / 2;
 }
 
-/** Draw the midpoint line. Calls onSync with a function that scrolls the index to that line. */
+/**
+ * Unclamped blue-line Y to hold across zoom, or null.
+ * Null when the line is missing or outside the visible contents: the caller
+ * then holds the link fraction at the visible centre. CSS zoom reflows the
+ * main text, so this Y is not scale-invariant. The caller stores it and
+ * reclamps it on each step.
+ */
+export function contentsLineHold(
+  lineY: number | null,
+  visibleTop: number,
+  visibleBottom: number,
+): number | null {
+  if (
+    lineY !== null &&
+    Number.isFinite(lineY) &&
+    Number.isFinite(visibleTop) &&
+    Number.isFinite(visibleBottom) &&
+    visibleBottom >= visibleTop &&
+    lineY >= visibleTop &&
+    lineY <= visibleBottom
+  ) {
+    return lineY;
+  }
+  return null;
+}
+
+/**
+ * Y held in the contents list across a zoom.
+ * The blue line wins when it lies in the scroller's visible span. Otherwise
+ * the visible centre, including when the line is scrolled out of view.
+ */
+export function contentsHoldY(
+  lineY: number | null,
+  visibleTop: number,
+  visibleBottom: number,
+  visibleCentre: number,
+): number {
+  const line = contentsLineHold(lineY, visibleTop, visibleBottom);
+  if (line !== null) return line;
+  return Number.isFinite(visibleCentre) ? visibleCentre : 0;
+}
+
+/**
+ * Aim used for this zoom step. A sticky `height: 100vh` contents pane is
+ * scaled by CSS zoom, so at 50% it is only half the viewport tall and the
+ * original screen Y can sit below it. Clamp the aim to the visible span.
+ * The caller keeps the original target and uses it again on the next step.
+ * An unusable span leaves the target unchanged.
+ */
+export function clampContentsTarget(targetY: number, visibleTop: number, visibleBottom: number): number {
+  if (!Number.isFinite(targetY)) return targetY;
+  if (!Number.isFinite(visibleTop) || !Number.isFinite(visibleBottom) || !(visibleBottom >= visibleTop)) {
+    return targetY;
+  }
+  if (targetY < visibleTop) return visibleTop;
+  if (targetY > visibleBottom) return visibleBottom;
+  return targetY;
+}
+
+/**
+ * How far a contents point has drifted from the screen Y it was held at.
+ * `offset` is the point's distance from `anchorY` when it was recorded
+ * (0 when the point itself should sit on the aim). Positive means the
+ * point is too low. A non-finite input does not move the list.
+ */
+export function contentsLinkError(linkPoint: number, anchorY: number, offset: number): number {
+  if (!Number.isFinite(linkPoint) || !Number.isFinite(anchorY) || !Number.isFinite(offset)) return 0;
+  return linkPoint - (anchorY + offset);
+}
+
+/**
+ * Link under the blue line, the fraction of that link, and the screen Y to hold.
+ * `lineY0` is the unclamped interpolated line when it lay inside the visible
+ * contents. Null keeps the link-fraction anchor (no line, or the line was outside).
+ */
+export type ContentsZoomAnchor = {
+  link: HTMLAnchorElement;
+  fraction: number;
+  targetY: number;
+  lineY0: number | null;
+};
+
+export type SideIndexZoomToken = { id: number };
+
+export type SideIndexZoomResult = {
+  /** Original link, fraction, target Y, and line Y. Not the clamped aim. */
+  anchor: ContentsZoomAnchor | null;
+  scrollTop: number | null;
+};
+
+const emptyZoomResult = (): SideIndexZoomResult => ({ anchor: null, scrollTop: null });
+
+export type SideIndexController = {
+  destroy: () => void;
+  /**
+   * Record the contents anchor and pause the line watcher.
+   * `reuse`, when the link is still in this index, keeps that anchor
+   * (including the original line Y) instead of capturing a new one.
+   */
+  beginZoom: (reuse?: ContentsZoomAnchor | null) => SideIndexZoomToken | null;
+  /** Scroll the contents anchor back, draw the line once, and resume the watcher. */
+  endZoom: (token: SideIndexZoomToken | null) => SideIndexZoomResult;
+  /** The contents element this index chose, once it is mounted. */
+  contentsElement: () => HTMLElement | null;
+  /** Contents scroller scrollTop, or null when the list has no scroller of its own. */
+  contentsScrollTop: () => number | null;
+};
+
+function scrollsOnY(el: HTMLElement, view: Window): boolean {
+  if (el.scrollHeight <= el.clientHeight + 1) return false;
+  const oy = view.getComputedStyle(el).overflowY;
+  return oy === 'auto' || oy === 'scroll' || oy === 'overlay';
+}
+
+/**
+ * The contents list's own scroller: the index, or the nearest scrollable
+ * ancestor that does not also scroll the main text. The document scroller
+ * is the main document's job.
+ */
+function contentsScroller(index: HTMLElement, doc: Document, pairs: Pair[]): HTMLElement | null {
+  const view = doc.defaultView;
+  if (!view) return null;
+  const root = doc.scrollingElement;
+  const holdsMain = (el: HTMLElement) =>
+    pairs.some((pair) => !index.contains(pair.target) && el.contains(pair.target));
+  let node: HTMLElement | null = index;
+  while (node && node !== root && node !== doc.body && node !== doc.documentElement) {
+    if (holdsMain(node)) return null;
+    if (scrollsOnY(node, view)) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Draw the midpoint line. Calls onSync with a function that scrolls the index to that line.
+ * `beginZoom` / `endZoom` hold the contents list across a document zoom.
+ */
 export function attachSideIndex(
   doc: Document,
   pageUrl: string,
   onSync?: (sync: (() => void) | null) => void,
   onLine?: (line: IndexLine | null) => void,
-): () => void {
+): SideIndexController {
   const view = doc.defaultView;
-  if (!view) return () => {};
+  if (!view) {
+    return {
+      destroy() {},
+      beginZoom: () => null,
+      endZoom: () => emptyZoomResult(),
+      contentsElement: () => null,
+      contentsScrollTop: () => null,
+    };
+  }
   let disposed = false;
   let stop = () => {};
+  let zoomBegin: (reuse?: ContentsZoomAnchor | null) => SideIndexZoomToken | null = () => null;
+  let zoomEnd: (token: SideIndexZoomToken | null) => SideIndexZoomResult = () => emptyZoomResult();
+  let zoomContents: () => HTMLElement | null = () => null;
+  let zoomScrollTop: () => number | null = () => null;
   const mount = () => {
     if (disposed || doc.querySelector('[data-lhr-index-ui]')) return;
     const index = chooseIndex(doc, collectPairs(doc, pageUrl));
@@ -220,16 +370,189 @@ export function attachSideIndex(
     };
 
     let frame = 0;
-    const watch = () => {
+    let paused = false;
+    let zoomSeq = 0;
+    let zoomHold: {
+      id: number;
+      scroller: HTMLElement | null;
+      anchor: ContentsZoomAnchor | null;
+    } | null = null;
+
+    const rawLineY = () => {
+      const mid = (view.innerHeight || doc.documentElement.clientHeight) / 2;
+      const marks: IndexMark[] = [];
+      for (const pair of pairs) {
+        if (!pair.link.isConnected || !pair.target.isConnected) continue;
+        const content = targetTop(pair.target);
+        const linkBox = pair.link.getBoundingClientRect();
+        if (content === null || (linkBox.width < 1 && linkBox.height < 1)) continue;
+        marks.push({ content, index: linkBox.top + linkBox.height / 2 });
+      }
+      return indexMarkY(marks, mid);
+    };
+
+    const linkUnder = (y: number): { link: HTMLAnchorElement; fraction: number } | null => {
+      let containing: { link: HTMLAnchorElement; fraction: number; dist: number } | null = null;
+      let closest: { link: HTMLAnchorElement; fraction: number; dist: number } | null = null;
+      for (const pair of pairs) {
+        if (!pair.link.isConnected) continue;
+        const box = pair.link.getBoundingClientRect();
+        if (box.height < 1) continue;
+        const mid = box.top + box.height / 2;
+        const dist = Math.abs(mid - y);
+        const fraction = pageFraction(y, box.top, box.height);
+        if (!closest || dist < closest.dist) closest = { link: pair.link, fraction, dist };
+        if (y >= box.top && y <= box.bottom && (!containing || dist < containing.dist)) {
+          containing = { link: pair.link, fraction, dist };
+        }
+      }
+      const picked = containing ?? closest;
+      return picked ? { link: picked.link, fraction: picked.fraction } : null;
+    };
+
+    const visibleContentsSpan = (scroller: HTMLElement): { top: number; bottom: number } => {
+      const pane = scroller.getBoundingClientRect();
+      const viewH = view.innerHeight || doc.documentElement.clientHeight;
+      return { top: Math.max(pane.top, 0), bottom: Math.min(pane.bottom, viewH) };
+    };
+
+    const pauseWatch = () => {
+      paused = true;
+      if (frame) {
+        view.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+    };
+
+    const resumeWatch = () => {
       if (disposed) return;
+      paused = false;
+      if (!frame) frame = view.requestAnimationFrame(watch);
+    };
+
+    const watch = () => {
+      frame = 0;
+      if (disposed || paused) return;
       placeLine();
+      if (disposed || paused) return;
       frame = view.requestAnimationFrame(watch);
+    };
+
+    // Hold the blue line's screen Y while the main document centre stays fixed.
+    // CSS zoom reflows the main text: the column is narrower in CSS px, so the
+    // same sections take more lines. indexMarkY interpolates between those
+    // section tops, so it is not scale-invariant (100%→150% grew one section
+    // span by about ×1.96, not ×1.5). Holding the link under the line lets the
+    // line drift by a few pixels and can flip the active entry. Scrolling the
+    // list by d visual px moves every link centre and therefore the interpolated
+    // line by d. When the line is missing or outside the visible contents, fall
+    // back to the link fraction at the visible centre. A sticky 100vh pane can
+    // leave the original Y outside the new span; that step clamps the aim and
+    // the session keeps the original lineY0 so the next step can restore it.
+    // Zoom does not change the active row and does not run Sync Contents.
+    // The watcher stays paused until the correction finishes, then the line
+    // is drawn once so an intermediate frame cannot show a different entry.
+    zoomBegin = (reuse) => {
+      pauseWatch();
+      const id = ++zoomSeq;
+      const scroller = contentsScroller(index, doc, pairs);
+      let anchor: ContentsZoomAnchor | null = null;
+      if (reuse?.link.isConnected && index.contains(reuse.link)) {
+        anchor = {
+          link: reuse.link,
+          fraction: reuse.fraction,
+          targetY: reuse.targetY,
+          lineY0: reuse.lineY0,
+        };
+      } else if (scroller) {
+        const pane = scroller.getBoundingClientRect();
+        const span = visibleContentsSpan(scroller);
+        const viewH = view.innerHeight || doc.documentElement.clientHeight;
+        const lineY = rawLineY();
+        const targetY = contentsHoldY(lineY, span.top, span.bottom, visiblePaneCenter(pane, viewH));
+        const lineY0 = contentsLineHold(lineY, span.top, span.bottom);
+        const found = linkUnder(targetY);
+        if (found) anchor = { link: found.link, fraction: found.fraction, targetY, lineY0 };
+      }
+      zoomHold = { id, scroller, anchor };
+      return { id };
+    };
+
+    zoomEnd = (token) => {
+      if (!token || zoomHold?.id !== token.id) return emptyZoomResult();
+      const hold = zoomHold;
+      zoomHold = null;
+      const { scroller, anchor } = hold;
+      if (scroller && anchor?.link.isConnected) {
+        const lineY0 = anchor.lineY0;
+        if (typeof lineY0 === 'number' && Number.isFinite(lineY0)) {
+          // zoomEnd runs after the main-document centre correction, so rawLineY
+          // already includes reflow. d visual px of contents scroll moves the line by d.
+          for (let i = 0; i < ZOOM_ANCHOR_ITERS; i++) {
+            const span = visibleContentsSpan(scroller);
+            const aim = clampContentsTarget(lineY0, span.top, span.bottom);
+            const lineY = rawLineY();
+            const error = lineY === null || !Number.isFinite(lineY) ? Number.NaN : lineY - aim;
+            if (zoomAnchorSettled(error)) break;
+            const moved = correctScrollByVisual(
+              error,
+              () => scroller.scrollTop,
+              (value) => {
+                scroller.scrollTop = value;
+              },
+              () => rawLineY(),
+            );
+            if (!moved) break;
+          }
+        } else {
+          const link = anchor.link;
+          for (let i = 0; i < ZOOM_ANCHOR_ITERS; i++) {
+            const span = visibleContentsSpan(scroller);
+            // A sticky 100vh list is shorter under CSS zoom. Aim inside the
+            // visible span for this step and keep the original targetY.
+            const aim = clampContentsTarget(anchor.targetY, span.top, span.bottom);
+            const box = link.getBoundingClientRect();
+            if (!(box.height > 0)) break;
+            const point = box.top + anchor.fraction * box.height;
+            const visualDelta = contentsLinkError(point, aim, 0);
+            if (zoomAnchorSettled(visualDelta)) break;
+            const moved = correctScrollByVisual(
+              visualDelta,
+              () => scroller.scrollTop,
+              (value) => {
+                scroller.scrollTop = value;
+              },
+              () => {
+                const next = link.getBoundingClientRect();
+                return next.top + anchor.fraction * next.height;
+              },
+            );
+            if (!moved) break;
+          }
+        }
+      }
+      placeLine();
+      resumeWatch();
+      return {
+        anchor: anchor?.link.isConnected ? anchor : null,
+        scrollTop: scroller ? scroller.scrollTop : null,
+      };
+    };
+
+    zoomContents = () => index;
+    zoomScrollTop = () => {
+      const scroller = contentsScroller(index, doc, pairs);
+      return scroller ? scroller.scrollTop : null;
     };
     frame = view.requestAnimationFrame(watch);
     onSync?.(sync);
 
     stop = () => {
+      paused = true;
       if (frame) view.cancelAnimationFrame(frame);
+      frame = 0;
+      zoomHold = null;
+      zoomScrollTop = () => null;
       marker.remove();
       onLine?.(null);
       onSync?.(null);
@@ -247,9 +570,19 @@ export function attachSideIndex(
     }
   };
   view.requestAnimationFrame(attempt);
-  return () => {
-    disposed = true;
-    view.clearTimeout(timer);
-    stop();
+  return {
+    destroy() {
+      disposed = true;
+      view.clearTimeout(timer);
+      stop();
+      zoomBegin = () => null;
+      zoomEnd = () => emptyZoomResult();
+      zoomContents = () => null;
+      zoomScrollTop = () => null;
+    },
+    beginZoom: (reuse) => (disposed ? null : zoomBegin(reuse)),
+    endZoom: (token) => (disposed ? emptyZoomResult() : zoomEnd(token)),
+    contentsElement: () => (disposed ? null : zoomContents()),
+    contentsScrollTop: () => (disposed ? null : zoomScrollTop()),
   };
 }

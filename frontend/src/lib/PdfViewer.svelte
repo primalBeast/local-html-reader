@@ -6,7 +6,15 @@
   import type { PDFDocumentProxy } from 'pdfjs-dist';
   import { indexMarkY } from './sideIndex';
   import { buildToc, destTop, topFraction, readingKeyFromPages, type OutlineNode, type TocRow } from './pdfOutline';
-  import { pdfWheelOrigin, type PdfScaleOrigin } from './docZoom';
+  import {
+    correctScrollByVisual,
+    pageFraction,
+    pageFractionVisualDelta,
+    paneCentre,
+    pdfCentreOrigin,
+    ZOOM_ANCHOR_ITERS,
+    zoomAnchorSettled,
+  } from './docZoom';
 
   const TEXT_LAYER = 1;
   const ANNOTATIONS = 1;
@@ -24,9 +32,10 @@
     src,
     overlay = false,
     scale = 1,
-    scaleOrigin = null,
     onScale,
     onZoomWheel,
+    reusePdfZoom,
+    commitPdfZoom,
     onReady,
     onSettled,
     onPageProgress,
@@ -37,9 +46,12 @@
     overlay?: boolean;
     /** Shared document zoom. 1 is actual size. */
     scale?: number;
-    scaleOrigin?: PdfScaleOrigin | null;
     onScale?: (scale: number) => void;
     onZoomWheel?: (event: WheelEvent) => void;
+    /** Page and fractions from the current zoom session, or null to capture. */
+    reusePdfZoom?: (scrollTop: number, scrollLeft: number) => PdfZoomAnchor | null;
+    /** Scroll positions after the correction. Null anchor clears the session. */
+    commitPdfZoom?: (anchor: PdfZoomAnchor | null, scrollTop: number, scrollLeft: number) => void;
     onReady?: (root: HTMLElement) => void;
     onSettled?: (src: string) => void;
     onPageProgress?: (loaded: number, total: number, src: string) => void;
@@ -76,11 +88,124 @@
   let pdfScaleLive = $state(false);
   /** Set while pagesinit applies the scale, so the effect does not apply it twice. */
   let suspendScaleEffect = false;
-  let appliedOriginId = -1;
   let reportAlive = true;
   /** Latest prop values. pagesinit runs inside onMount and must not close over the first scale. */
   let latestScale = 1;
-  let latestOrigin: PdfScaleOrigin | null = null;
+
+  export type PdfZoomAnchor = {
+    page: HTMLElement;
+    pageNumber: number;
+    fracX: number;
+    fracY: number;
+    targetX: number;
+    targetY: number;
+  };
+
+  function pageNumberOf(page: HTMLElement): number {
+    const n = Number(page.dataset.pageNumber);
+    return Number.isInteger(n) && n > 0 ? n : 0;
+  }
+
+  function resolvePdfPage(container: HTMLElement, hold: PdfZoomAnchor): HTMLElement | null {
+    if (hold.page.isConnected && container.contains(hold.page)) return hold.page;
+    if (!hold.pageNumber) return null;
+    const node = container.querySelector(`.page[data-page-number="${hold.pageNumber}"]`);
+    return node instanceof HTMLElement ? node : null;
+  }
+
+  function pdfVisibleCentre(container: HTMLElement): { x: number; y: number } {
+    const box = container.getBoundingClientRect();
+    const mid = paneCentre(container.clientWidth, container.clientHeight);
+    return {
+      x: box.left + container.clientLeft + mid.x,
+      y: box.top + container.clientTop + mid.y,
+    };
+  }
+
+  function pageUnderCentre(container: HTMLElement, centre: { x: number; y: number }): HTMLElement | null {
+    const doc = container.ownerDocument;
+    const hit = doc.elementFromPoint(centre.x, centre.y);
+    const fromHit = hit?.closest('.page');
+    if (fromHit instanceof HTMLElement && container.contains(fromHit)) return fromHit;
+    let best: HTMLElement | null = null;
+    let bestDist = Infinity;
+    for (const node of container.querySelectorAll('.page')) {
+      if (!(node instanceof HTMLElement)) continue;
+      const rect = node.getBoundingClientRect();
+      if (centre.x >= rect.left && centre.x <= rect.right && centre.y >= rect.top && centre.y <= rect.bottom) {
+        return node;
+      }
+      const dist = Math.abs(centre.y - (rect.top + rect.height / 2));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = node;
+      }
+    }
+    return best;
+  }
+
+  function capturePdfHold(container: HTMLElement): PdfZoomAnchor | null {
+    const centre = pdfVisibleCentre(container);
+    const page = pageUnderCentre(container, centre);
+    if (!page) return null;
+    const rect = page.getBoundingClientRect();
+    return {
+      page,
+      pageNumber: pageNumberOf(page),
+      fracX: pageFraction(centre.x, rect.left, rect.width),
+      fracY: pageFraction(centre.y, rect.top, rect.height),
+      targetX: centre.x,
+      targetY: centre.y,
+    };
+  }
+
+  function settlePdfHold(container: HTMLElement, hold: PdfZoomAnchor | null): PdfZoomAnchor | null {
+    if (!hold) return null;
+    const page = resolvePdfPage(container, hold);
+    if (!page) return null;
+    const live = page === hold.page ? hold : { ...hold, page };
+    for (let i = 0; i < ZOOM_ANCHOR_ITERS; i++) {
+      const rect = page.getBoundingClientRect();
+      const errorX = pageFractionVisualDelta(live.fracX, rect.left, rect.width, live.targetX);
+      const errorY = pageFractionVisualDelta(live.fracY, rect.top, rect.height, live.targetY);
+      if (zoomAnchorSettled(errorX) && zoomAnchorSettled(errorY)) return live;
+      let moved = false;
+      if (!zoomAnchorSettled(errorY)) {
+        moved =
+          correctScrollByVisual(
+            errorY,
+            () => container.scrollTop,
+            (value) => {
+              container.scrollTop = value;
+            },
+            () => {
+              const box = page.getBoundingClientRect();
+              return box.top + live.fracY * box.height;
+            },
+          ) || moved;
+      }
+      if (!zoomAnchorSettled(errorX)) {
+        const rectNow = page.getBoundingClientRect();
+        const errorXNow = pageFractionVisualDelta(live.fracX, rectNow.left, rectNow.width, live.targetX);
+        if (!zoomAnchorSettled(errorXNow)) {
+          moved =
+            correctScrollByVisual(
+              errorXNow,
+              () => container.scrollLeft,
+              (value) => {
+                container.scrollLeft = value;
+              },
+              () => {
+                const box = page.getBoundingClientRect();
+                return box.left + live.fracX * box.width;
+              },
+            ) || moved;
+        }
+      }
+      if (!moved) return live;
+    }
+    return live;
+  }
 
   function reportScale(value: number) {
     queueMicrotask(() => {
@@ -89,33 +214,46 @@
     });
   }
 
-  function applyExternalScale(view: PDFViewer, next: number, origin: PdfScaleOrigin | null, fresh: boolean) {
+  function applyExternalScale(view: PDFViewer, next: number, fresh: boolean) {
     if (!view.pdfDocument || !Number.isFinite(next)) return;
     if (fresh) {
-      // A new document takes the current docZoom. Ignore a gesture origin from the load.
-      if (origin) appliedOriginId = origin.id;
+      // A new document takes the current docZoom at the viewer's own scroll origin.
       view.currentScale = next;
+      reportScale(view.currentScale);
+      const container = view.container;
+      commitPdfZoom?.(null, container?.scrollTop ?? 0, container?.scrollLeft ?? 0);
+      return;
+    }
+    const current = view.currentScale > 0 ? view.currentScale : 1;
+    if (Math.abs(current - next) <= 0.001) {
       reportScale(view.currentScale);
       return;
     }
-    if (origin && origin.id !== appliedOriginId) {
-      appliedOriginId = origin.id;
-      const current = view.currentScale > 0 ? view.currentScale : 1;
-      const factor = next / current;
-      if (Number.isFinite(factor) && Math.abs(factor - 1) > 1e-4) {
-        const box = view.container.getBoundingClientRect();
-        view.updateScale({
-          scaleFactor: factor,
-          drawingDelay: 200,
-          origin: pdfWheelOrigin(
-            origin.x,
-            origin.y,
-            box,
-            { left: view.container.offsetLeft, top: view.container.offsetTop },
-          ),
-        });
-      }
-    } else if (Math.abs((view.currentScale || 1) - next) > 0.001) {
+    const factor = next / current;
+    const container = view.container;
+    if (Number.isFinite(factor) && Math.abs(factor - 1) > 1e-4 && container) {
+      // Zoom about the centre, then put the same page fraction back within 0.5px.
+      // A live session reuses the page and fractions instead of capturing again.
+      const reused = reusePdfZoom?.(container.scrollTop, container.scrollLeft) ?? null;
+      let hold = reused && resolvePdfPage(container, reused) ? reused : capturePdfHold(container);
+      const box = container.getBoundingClientRect();
+      view.updateScale({
+        scaleFactor: factor,
+        drawingDelay: 200,
+        origin: pdfCentreOrigin(
+          box,
+          {
+            left: container.clientLeft,
+            top: container.clientTop,
+            width: container.clientWidth,
+            height: container.clientHeight,
+          },
+          { left: container.offsetLeft, top: container.offsetTop },
+        ),
+      });
+      hold = settlePdfHold(container, hold);
+      commitPdfZoom?.(hold, container.scrollTop, container.scrollLeft);
+    } else {
       view.currentScale = next;
     }
     reportScale(view.currentScale);
@@ -123,11 +261,10 @@
 
   $effect(() => {
     latestScale = scale;
-    latestOrigin = scaleOrigin ?? null;
     const live = pdfScaleLive;
     const view = pdfViewerRef;
     if (suspendScaleEffect || !live || !view?.pdfDocument) return;
-    applyExternalScale(view, latestScale, latestOrigin, false);
+    applyExternalScale(view, latestScale, false);
   });
   let tocItems: TocRow[] = [];
 
@@ -385,7 +522,7 @@
         // this PDF leaves it alone. Actual size when that value is 1.
         suspendScaleEffect = true;
         pdfScaleLive = true;
-        if (pdfViewer) applyExternalScale(pdfViewer, latestScale, latestOrigin, true);
+        if (pdfViewer) applyExternalScale(pdfViewer, latestScale, true);
         suspendScaleEffect = false;
         placeTocLine();
       });
@@ -498,6 +635,7 @@
     loadUrl = async (url: string) => {
       pdfScaleLive = false;
       activeUrl = url;
+      commitPdfZoom?.(null, scroller?.scrollTop ?? 0, scroller?.scrollLeft ?? 0);
       const gen = ++loadGen;
       error = null;
       loading = true;

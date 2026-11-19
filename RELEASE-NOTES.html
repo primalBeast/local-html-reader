@@ -113,6 +113,21 @@
 
       <article>
         <div class="row">
+          <h2>Zoom keeps the middle of the page still</h2>
+          <span class="chip">pending</span>
+          <span class="date">2026-11-18</span>
+        </div>
+        <ul>
+          <li>Every way of zooming (Ctrl+wheel, Ctrl + / - / 0, dragging the zoom %, double-clicking it) now zooms around the middle of the document pane, not the mouse pointer. The text in the middle of the pane stays where it is.</li>
+          <li>The blue line in a page's contents list stays in the same place on screen and on the same entry while you zoom. The contents list scrolls to keep it there.</li>
+          <li>PDFs zoom around the middle of the visible page area too.</li>
+          <li>Zooming in and back out without scrolling returns the document and the contents list to exactly where they were, even if the page hit its top or bottom on the way.</li>
+          <li>The middle can't stay still when the page can't scroll far enough: at the very top or bottom of a document, or when a contents list is at its end.</li>
+        </ul>
+      </article>
+
+      <article>
+        <div class="row">
           <h2>Sync Contents works at any zoom</h2>
           <span class="chip">23abab9</span>
           <span class="date">2026-11-18</span>

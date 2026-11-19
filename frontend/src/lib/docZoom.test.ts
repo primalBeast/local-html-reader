@@ -1,16 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  anchorPointError,
   applyWheelZoom,
   clampDocZoom,
-  pdfWheelOrigin,
-  scrollAfterZoom,
+  correctScrollByVisual,
+  measureVisualPerScroll,
+  axisCanScroll,
+  pageFraction,
+  pageFractionVisualDelta,
+  paneCentre,
+  pdfCentreOrigin,
+  sameZoomSession,
+  scrollDeltaForVisual,
+  visualPerScrollUnit,
   wheelZoomDelta,
   zoomAfterOpen,
+  zoomAnchorSettled,
   zoomFromDrag,
   zoomFromKey,
   zoomKeyCommand,
   zoomPercent,
   zoomReadout,
+  type ZoomSessionPositions,
+  type ZoomSessionSnapshot,
 } from './docZoom';
 
 describe('clampDocZoom', () => {
@@ -130,33 +142,186 @@ describe('zoomFromDrag', () => {
   });
 });
 
-describe('pdfWheelOrigin', () => {
-  it('puts the pointer in the scroller offset coordinates pdf.js subtracts', () => {
-    // Title bar and file list move the page off the window origin.
-    // The scroller's offset parent is the PDF frame, so offsetLeft is the contents width.
-    expect(pdfWheelOrigin(420, 260, { left: 320, top: 90 }, { left: 264, top: 0 })).toEqual([364, 170]);
-    // Already in the same space as client coordinates: leave the point alone.
-    expect(pdfWheelOrigin(420, 260, { left: 320, top: 90 }, { left: 320, top: 90 })).toEqual([420, 260]);
+describe('paneCentre', () => {
+  it('uses the middle of the visible viewport', () => {
+    expect(paneCentre(800, 600)).toEqual({ x: 400, y: 300 });
+    expect(paneCentre(612, 612)).toEqual({ x: 306, y: 306 });
+  });
+
+  it('treats a missing size as an empty pane', () => {
+    expect(paneCentre(0, 400)).toEqual({ x: 0, y: 200 });
+    expect(paneCentre(Number.NaN, Number.POSITIVE_INFINITY)).toEqual({ x: 0, y: 0 });
   });
 });
 
-describe('scrollAfterZoom', () => {
-  it('keeps the pointer fixed and otherwise keeps the top line', () => {
-    expect(
-      scrollAfterZoom({
-        scrollLeft: 40,
-        scrollTop: 100,
-        oldZoom: 1,
-        newZoom: 2,
-        anchor: { x: 10, y: 50 },
-      }),
-    ).toEqual({ scrollLeft: 90, scrollTop: 250 });
-    expect(
-      scrollAfterZoom({ scrollLeft: 40, scrollTop: 100, oldZoom: 1, newZoom: 2 }),
-    ).toEqual({ scrollLeft: 80, scrollTop: 200 });
-    expect(
-      scrollAfterZoom({ scrollLeft: 10, scrollTop: 20, oldZoom: 1.5, newZoom: 1.5, anchor: { x: 5, y: 5 } }),
-    ).toEqual({ scrollLeft: 10, scrollTop: 20 });
+describe('anchorPointError', () => {
+  it('is the change in the anchor offset from the pane centre', () => {
+    // Recorded when the caret sat 4px left and 6px above the centre.
+    const centre = { x: 400, y: 300 };
+    const offset = { x: -4, y: -6 };
+    expect(anchorPointError({ x: 396, y: 294 }, centre, offset)).toEqual({ x: 0, y: 0 });
+    // After zoom the caret is 10px too low and 2px too far right.
+    expect(anchorPointError({ x: 398, y: 304 }, centre, offset)).toEqual({ x: 2, y: 10 });
+  });
+});
+
+describe('visual scroll correction', () => {
+  it('turns a visual error into scroll units from a measured ratio', () => {
+    // scrollTop 100 moves content 50 visual px at 50%: ratio 0.5.
+    expect(visualPerScrollUnit(200, 150, 100)).toBeCloseTo(0.5);
+    expect(scrollDeltaForVisual(50, 0.5)).toBe(100);
+    expect(scrollDeltaForVisual(-25, 1)).toBe(-25);
+    expect(scrollDeltaForVisual(10, 0)).toBe(0);
+    expect(scrollDeltaForVisual(Number.NaN, 1)).toBe(0);
+  });
+
+  it('settles at half a pixel', () => {
+    expect(zoomAnchorSettled(0.5)).toBe(true);
+    expect(zoomAnchorSettled(-0.5)).toBe(true);
+    expect(zoomAnchorSettled(0.51)).toBe(false);
+    expect(zoomAnchorSettled(Number.NaN)).toBe(true);
+  });
+
+  it('measures the ratio with a probe and restores the scroll offset', () => {
+    let scroll = 80;
+    let pos = 400;
+    const setScroll = (value: number) => {
+      const next = Math.min(200, Math.max(0, value));
+      pos -= (next - scroll) * 0.5;
+      scroll = next;
+    };
+    expect(measureVisualPerScroll(() => pos, () => scroll, setScroll)).toBeCloseTo(0.5);
+    expect(scroll).toBe(80);
+    expect(pos).toBe(400);
+  });
+
+  it('probes the other way when the scroller is at the end', () => {
+    let scroll = 100;
+    let pos = 800;
+    const setScroll = (value: number) => {
+      const next = Math.min(100, Math.max(0, value));
+      pos -= (next - scroll) * 2;
+      scroll = next;
+    };
+    expect(measureVisualPerScroll(() => pos, () => scroll, setScroll, 20)).toBeCloseTo(2);
+    expect(scroll).toBe(100);
+    expect(pos).toBe(800);
+  });
+
+  it('corrects a 50% zoom error and leaves a clamped scroller alone', () => {
+    let scroll = 0;
+    let pos = 100;
+    const setScroll = (value: number) => {
+      const next = Math.max(0, value);
+      pos -= (next - scroll) * 0.5;
+      scroll = next;
+    };
+    expect(correctScrollByVisual(50, () => scroll, setScroll, () => pos)).toBe(true);
+    expect(scroll).toBeCloseTo(100);
+    expect(pos).toBeCloseTo(50);
+
+    expect(correctScrollByVisual(0.4, () => scroll, setScroll, () => pos)).toBe(false);
+    expect(scroll).toBeCloseTo(100);
+  });
+});
+
+describe('pdfCentreOrigin', () => {
+  it('converts the visible centre into the origin pdf.js subtracts offset from', () => {
+    // The scroller's offset parent is the PDF frame, so offsetLeft is the contents width.
+    const box = { left: 320, top: 90 };
+    const client = { left: 0, top: 0, width: 800, height: 600 };
+    const offset = { left: 264, top: 0 };
+    const [x, y] = pdfCentreOrigin(box, client, offset);
+    expect([x, y]).toEqual([664, 300]);
+    // pdf.js uses origin − offsetLeft/Top as the point inside the container.
+    expect(x - offset.left).toBe(400);
+    expect(y - offset.top).toBe(300);
+  });
+
+  it('keeps a border and a scrollbar out of the centre', () => {
+    const box = { left: 320, top: 90 };
+    const client = { left: 2, top: 4, width: 780, height: 560 };
+    const offset = { left: 264, top: 0 };
+    const [x, y] = pdfCentreOrigin(box, client, offset);
+    expect(x - offset.left).toBe(2 + 390);
+    expect(y - offset.top).toBe(4 + 280);
+  });
+
+  it('matches viewport coordinates when the offset parent is the viewport', () => {
+    const box = { left: 320, top: 90 };
+    const client = { left: 0, top: 0, width: 200, height: 340 };
+    expect(pdfCentreOrigin(box, client, { left: 320, top: 90 })).toEqual([420, 260]);
+  });
+});
+
+describe('axisCanScroll', () => {
+  it('counts a real offset even when CSS zoom reports no overflow', () => {
+    expect(axisCanScroll(12, 800, 800)).toBe(true);
+    expect(axisCanScroll(-4, 800, 800)).toBe(true);
+    expect(axisCanScroll(0, 800, 800)).toBe(false);
+    expect(axisCanScroll(0.4, 800, 800)).toBe(false);
+  });
+
+  it('scrolls when the content is more than a pixel larger than the pane', () => {
+    expect(axisCanScroll(0, 901, 800)).toBe(true);
+    expect(axisCanScroll(0, 801, 800)).toBe(false);
+    expect(axisCanScroll(0, Number.NaN, 800)).toBe(false);
+  });
+});
+
+function session(id: string, scroll: Partial<ZoomSessionPositions> = {}): ZoomSessionSnapshot {
+  return {
+    id,
+    scroll: {
+      documentTop: 120,
+      documentLeft: 40,
+      contentsTop: 80,
+      pdfTop: null,
+      pdfLeft: null,
+      ...scroll,
+    },
+  };
+}
+
+describe('sameZoomSession', () => {
+  it('keeps the gesture when the document and every scroll position stay within 1px', () => {
+    const prev = session('doc');
+    expect(sameZoomSession(prev, session('doc'))).toBe(true);
+    expect(sameZoomSession(prev, session('doc', { documentTop: 121, pdfTop: null }))).toBe(true);
+    expect(sameZoomSession(prev, session('doc', { contentsTop: 79.2 }))).toBe(true);
+  });
+
+  it('starts a fresh capture after a scroll, a new document, or a reload', () => {
+    const prev = session('doc');
+    expect(sameZoomSession(prev, session('doc', { documentLeft: 42 }))).toBe(false);
+    expect(sameZoomSession(prev, session('other'))).toBe(false);
+    expect(sameZoomSession(null, session('doc'))).toBe(false);
+    expect(sameZoomSession(prev, null)).toBe(false);
+    expect(sameZoomSession(prev, session('doc', { contentsTop: null }))).toBe(false);
+    const pdf = session('pdf', {
+      documentTop: null,
+      documentLeft: null,
+      contentsTop: null,
+      pdfTop: 10,
+      pdfLeft: 0,
+    });
+    expect(sameZoomSession(pdf, pdf)).toBe(true);
+  });
+});
+
+describe('page fraction', () => {
+  it('records where the centre sits in the page and the error after scaling', () => {
+    const centre = 180;
+    const fraction = pageFraction(centre, 100, 200);
+    expect(fraction).toBeCloseTo(0.4);
+    // Page grew and its top moved. The same fraction is 30px below the centre.
+    expect(pageFractionVisualDelta(fraction, 50, 400, centre)).toBeCloseTo(30);
+    expect(scrollDeltaForVisual(pageFractionVisualDelta(fraction, 50, 400, centre), 1)).toBeCloseTo(30);
+  });
+
+  it('returns 0 when the page size cannot divide', () => {
+    expect(pageFraction(10, 0, 0)).toBe(0);
+    expect(pageFractionVisualDelta(Number.NaN, 0, 10, 5)).toBe(0);
   });
 });
 
